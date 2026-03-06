@@ -88,7 +88,7 @@ def cli(ctx):
         )
         console.print(Panel(banner, border_style="magenta", padding=(0, 2)))
         console.print()
-        console.print(ctx.get_help())
+        click.echo(ctx.get_help())
 
 
 # ---------------------------------------------------------------------------
@@ -100,11 +100,11 @@ def cli(ctx):
 def ingest():
     """Ingest chat history from Claude Code, Claude Desktop, or a custom source.
 
-    [bold]Quick start:[/bold]
-
-      [cyan]memory-bank ingest claude-code[/cyan]              # auto-detects ~/.claude/projects
-      [cyan]memory-bank ingest claude-desktop -p export.json[/cyan]
-      [cyan]memory-bank ingest all[/cyan]                      # all auto-detectable sources
+    \b
+    Quick start:
+      memory-bank ingest claude-code              # auto-detects ~/.claude/projects
+      memory-bank ingest claude-desktop -p export.json
+      memory-bank ingest all                      # all auto-detectable sources
     """
 
 
@@ -132,10 +132,10 @@ def ingest_claude_code(path, db):
     [cyan]BAAI/bge-small-en-v1.5[/cyan], and stores them in the vector DB.
     Re-running is safe — duplicate messages are skipped automatically.
 
-    [bold]Examples:[/bold]
-
-      [cyan]memory-bank ingest claude-code[/cyan]
-      [cyan]memory-bank ingest claude-code -p ~/work/.claude/projects[/cyan]
+    \b
+    Examples:
+      memory-bank ingest claude-code
+      memory-bank ingest claude-code -p ~/work/.claude/projects
     """
     from .ingestors.claude_code import ClaudeCodeIngestor
 
@@ -166,9 +166,9 @@ def ingest_claude_desktop(path, db):
     Export your history from Claude Desktop ([italic]Settings → Export[/italic]), then
     point this command at the resulting JSON file or directory.
 
-    [bold]Examples:[/bold]
-
-      [cyan]memory-bank ingest claude-desktop -p ~/Downloads/claude_export.json[/cyan]
+    \b
+    Examples:
+      memory-bank ingest claude-desktop -p ~/Downloads/claude_export.json
     """
     from .ingestors.claude_desktop import ClaudeDesktopIngestor
 
@@ -316,11 +316,11 @@ def search(query, limit, source, project, role, session, db, as_json):
     Uses vector similarity to find messages that [italic]mean[/italic] what you're looking for,
     not just messages that contain the exact words. Filters can be combined freely.
 
-    [bold]Examples:[/bold]
-
-      [cyan]memory-bank search "docker networking fix"[/cyan]
-      [cyan]memory-bank search "auth bug" -s claude-code -r assistant -n 5[/cyan]
-      [cyan]memory-bank search "deployment" -p my-project --json | jq '.[0].content'[/cyan]
+    \b
+    Examples:
+      memory-bank search "docker networking fix"
+      memory-bank search "auth bug" -s claude-code -r assistant -n 5
+      memory-bank search "deployment" -p my-project --json | jq '.[0].content'
     """
     from .db import MemoryDB
 
@@ -455,12 +455,12 @@ def stats(db):
 def delete(source, db):
     """Delete all ingested messages from a source.
 
-    [bold]SOURCE[/bold] must match the source name exactly (e.g. [dim]claude-code[/dim]).
-    Use [cyan]memory-bank stats[/cyan] to see available source names.
+    SOURCE must match the source name exactly (e.g. claude-code).
+    Use 'memory-bank stats' to see available source names.
 
-    [bold]Example:[/bold]
-
-      [cyan]memory-bank delete claude-desktop[/cyan]
+    \b
+    Example:
+      memory-bank delete claude-desktop
     """
     from .db import MemoryDB
 
