@@ -5,7 +5,7 @@ Local vector DB for ingesting and searching Claude chat histories.
 ## Setup
 
 ```bash
-pip install -e .
+uv pip install -e .
 ```
 
 The `memory-bank` CLI is now available. The Qdrant DB is stored at `~/.memory-bank/qdrant/` by default.

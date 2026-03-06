@@ -27,7 +27,7 @@ memory-bank stats
 If the command is not found, install it:
 
 ```bash
-pip install -e /home/user/memory-bank
+uv pip install -e /home/user/memory-bank
 ```
 
 If the DB is empty (0 messages), ingest first:
