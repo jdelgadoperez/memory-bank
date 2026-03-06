@@ -35,6 +35,18 @@ source .venv/bin/activate
 uv run memory-bank stats
 ```
 
+**Tip — add a shell alias** so `memory-bank` works from any directory without activating the venv. Add this to your `~/.zshrc` or `~/.bashrc`:
+
+```bash
+alias memory-bank="uv run --project /path/to/memory-bank memory-bank"
+```
+
+Replace `/path/to/memory-bank` with the actual clone location (e.g. `~/code/memory-bank`). Then reload your shell:
+
+```bash
+source ~/.zshrc   # or ~/.bashrc
+```
+
 ### 2. Ingest your Claude Code history
 
 Claude Code stores session logs in `~/.claude/projects/`. Ingest them all with:
