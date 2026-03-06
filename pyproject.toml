@@ -9,6 +9,7 @@ description = "Ingest and search Claude chat histories using a local vector DB"
 requires-python = ">=3.11"
 dependencies = [
     "qdrant-client[fastembed]>=1.9.0",
+    "onnxruntime<1.24",
     "click>=8.1",
     "anthropic>=0.40.0",
     "python-dateutil>=2.9",
