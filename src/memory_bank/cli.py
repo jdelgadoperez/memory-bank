@@ -31,7 +31,7 @@ def cli(ctx):
         )
         console.print(Panel(banner, border_style="magenta", padding=(0, 2)))
         console.print()
-        console.print(click.format_help(ctx.info_name, ctx))
+        console.print(ctx.get_help())
 
 
 # ---------------------------------------------------------------------------
