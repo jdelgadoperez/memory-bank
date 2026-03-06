@@ -1,19 +1,10 @@
 """CLI entry point: memory-bank <command>"""
 from __future__ import annotations
 
-import sys
 from pathlib import Path
-from typing import Optional
 
 import click
 from rich.console import Console
-from rich.table import Table
-from rich import print as rprint
-
-from .db import MemoryDB
-from .schema import IngestResult
-from .ingestors.claude_code import ClaudeCodeIngestor
-from .ingestors.claude_desktop import ClaudeDesktopIngestor
 
 console = Console()
 BATCH_SIZE = 256
@@ -44,6 +35,7 @@ def ingest():
               help="Override Qdrant DB path")
 def ingest_claude_code(path, db):
     """Ingest all Claude Code sessions from ~/.claude/projects/."""
+    from .ingestors.claude_code import ClaudeCodeIngestor
     ingestor = ClaudeCodeIngestor(claude_dir=Path(path) if path else None)
     _run_ingest(ingestor, db_path=Path(db) if db else None)
 
@@ -55,6 +47,7 @@ def ingest_claude_code(path, db):
               help="Override Qdrant DB path")
 def ingest_claude_desktop(path, db):
     """Ingest Claude Desktop conversations from an exported JSON file."""
+    from .ingestors.claude_desktop import ClaudeDesktopIngestor
     ingestor = ClaudeDesktopIngestor(path=Path(path))
     _run_ingest(ingestor, db_path=Path(db) if db else None)
 
@@ -108,6 +101,8 @@ There is no CLI flag for custom sources — use the Python API directly:
               help="Override Qdrant DB path")
 def ingest_all(db):
     """Ingest from all auto-detectable sources (Claude Code + Claude Desktop if found)."""
+    from .ingestors.claude_code import ClaudeCodeIngestor
+    from .ingestors.claude_desktop import ClaudeDesktopIngestor
     db_path = Path(db) if db else None
     ingestors = [ClaudeCodeIngestor()]
     desktop_ingestor = ClaudeDesktopIngestor()
@@ -137,6 +132,7 @@ def ingest_all(db):
 @click.option("--json", "as_json", is_flag=True, help="Output raw JSON (for agent use)")
 def search(query, limit, source, project, role, session, db, as_json):
     """Semantic search over ingested chat history."""
+    from .db import MemoryDB
     db_obj = MemoryDB(Path(db) if db else None)
     results = db_obj.search(
         query=query,
@@ -156,6 +152,7 @@ def search(query, limit, source, project, role, session, db, as_json):
         click.echo(json.dumps(results, indent=2))
         return
 
+    from rich.table import Table
     table = Table(title=f'Search: "{query}"', show_lines=True, expand=True)
     table.add_column("Score", style="cyan", width=7, no_wrap=True)
     table.add_column("Role", style="bold", width=10, no_wrap=True)
@@ -171,7 +168,6 @@ def search(query, limit, source, project, role, session, db, as_json):
         src_proj = f"{src}/{proj}" if proj else src
         ts = r.get("timestamp", "")[:19].replace("T", " ")
         content = r.get("content", "")
-        # Truncate long content for display
         if len(content) > 400:
             content = content[:397] + "…"
         table.add_row(score, role_str, src_proj, ts, content)
@@ -189,6 +185,7 @@ def search(query, limit, source, project, role, session, db, as_json):
               help="Override Qdrant DB path")
 def stats(db):
     """Show DB statistics."""
+    from .db import MemoryDB
     db_obj = MemoryDB(Path(db) if db else None)
     s = db_obj.stats()
 
@@ -215,6 +212,7 @@ def stats(db):
 @click.confirmation_option(prompt="Are you sure you want to delete all messages from this source?")
 def delete(source, db):
     """Delete all messages from a given source."""
+    from .db import MemoryDB
     db_obj = MemoryDB(Path(db) if db else None)
     n = db_obj.delete_by_source(source)
     console.print(f"[green]Deleted {n} messages from source '{source}'.[/green]")
@@ -224,7 +222,9 @@ def delete(source, db):
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _run_ingest(ingestor, db_path: Path | None = None) -> IngestResult:
+def _run_ingest(ingestor, db_path: Path | None = None):
+    from .db import MemoryDB
+    from .schema import IngestResult
     source = ingestor.source_name
     result = IngestResult(source=source)
 
