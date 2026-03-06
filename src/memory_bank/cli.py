@@ -59,6 +59,50 @@ def ingest_claude_desktop(path, db):
     _run_ingest(ingestor, db_path=Path(db) if db else None)
 
 
+@ingest.command("custom")
+def ingest_custom():
+    """Show how to ingest a custom data source via the Python API."""
+    console.print("""
+[bold]Custom data source ingestion[/bold]
+
+There is no CLI flag for custom sources — use the Python API directly:
+
+[bold cyan]1. Define a mapper function[/bold cyan]
+
+    from memory_bank.ingestors.custom import CustomIngestor, SourceRecord
+
+    def my_mapper(record: dict) -> SourceRecord | None:
+        return SourceRecord(
+            session_id=record["thread_id"],
+            role="user" if record["from_me"] else "assistant",
+            content=record["text"],
+            timestamp=record["date"],
+            project=record.get("channel", ""),
+            metadata={"platform": "slack"},
+        )
+
+[bold cyan]2. Run the ingestor[/bold cyan]
+
+    from memory_bank.db import MemoryDB
+
+    ingestor = CustomIngestor(
+        source_name="slack",
+        file_path="slack_export.json",
+        mapper=my_mapper,
+    )
+
+    db = MemoryDB()
+    for msg in ingestor.iter_messages():
+        db.upsert([msg])
+
+[bold cyan]3. Search as usual[/bold cyan]
+
+    memory-bank search "your query" --source slack
+
+[dim]See CLAUDE.md § "Adding a custom data source" for full details.[/dim]
+""")
+
+
 @ingest.command("all")
 @click.option("--db", type=click.Path(), default=None, envvar="MEMORY_BANK_DB",
               help="Override Qdrant DB path")
