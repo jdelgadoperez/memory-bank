@@ -4,10 +4,63 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import click
+import rich_click as click
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
+
+# ---------------------------------------------------------------------------
+# rich-click appearance
+# ---------------------------------------------------------------------------
+
+click.rich_click.USE_RICH_MARKUP = True
+click.rich_click.SHOW_ARGUMENTS = True
+click.rich_click.GROUP_ARGUMENTS_OPTIONS = False
+click.rich_click.STYLE_OPTION = "bold cyan"
+click.rich_click.STYLE_SWITCH = "bold cyan"
+click.rich_click.STYLE_METAVAR = "dim"
+click.rich_click.STYLE_HELPTEXT = ""
+click.rich_click.STYLE_ERRORS_SUGGESTION = "italic dim"
+click.rich_click.MAX_WIDTH = 100
+click.rich_click.COLOR_SYSTEM = "auto"
+
+click.rich_click.COMMAND_GROUPS = {
+    "memory-bank": [
+        {
+            "name": "Ingestion",
+            "commands": ["ingest"],
+        },
+        {
+            "name": "Query & Manage",
+            "commands": ["search", "stats", "delete"],
+        },
+    ],
+    "memory-bank ingest": [
+        {
+            "name": "Sources",
+            "commands": ["claude-code", "claude-desktop", "all", "custom"],
+        }
+    ],
+}
+
+click.rich_click.OPTION_GROUPS = {
+    "memory-bank search": [
+        {
+            "name": "Filters",
+            "options": ["--source", "--project", "--role", "--session"],
+        },
+        {
+            "name": "Output",
+            "options": ["--limit", "--json"],
+        },
+        {
+            "name": "Advanced",
+            "options": ["--db", "--help"],
+        },
+    ],
+}
+
+# ---------------------------------------------------------------------------
 
 console = Console()
 BATCH_SIZE = 256
@@ -22,7 +75,11 @@ CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 @click.group(context_settings=CONTEXT_SETTINGS, invoke_without_command=True)
 @click.pass_context
 def cli(ctx):
-    """memory-bank — search and ingest Claude chat histories into a local vector DB."""
+    """[bold magenta]memory-bank[/bold magenta] — your local semantic memory for Claude chat histories.
+
+    Ingest conversations from Claude Code or Claude Desktop into a local vector DB,
+    then search them semantically — no cloud, no API calls, fully offline.
+    """
     if ctx.invoked_subcommand is None:
         banner = Text.assemble(
             ("memory-bank", "bold magenta"),
@@ -41,7 +98,14 @@ def cli(ctx):
 
 @cli.group(context_settings=CONTEXT_SETTINGS)
 def ingest():
-    """Ingest chat history from a supported source."""
+    """Ingest chat history from Claude Code, Claude Desktop, or a custom source.
+
+    [bold]Quick start:[/bold]
+
+      [cyan]memory-bank ingest claude-code[/cyan]              # auto-detects ~/.claude/projects
+      [cyan]memory-bank ingest claude-desktop -p export.json[/cyan]
+      [cyan]memory-bank ingest all[/cyan]                      # all auto-detectable sources
+    """
 
 
 @ingest.command("claude-code", context_settings=CONTEXT_SETTINGS)
@@ -50,17 +114,29 @@ def ingest():
     "-p",
     type=click.Path(),
     default=None,
-    help="Path to ~/.claude/projects (default: auto-detect)",
+    metavar="DIR",
+    help="Path to your Claude projects dir. Defaults to [dim]~/.claude/projects[/dim].",
 )
 @click.option(
     "--db",
     type=click.Path(),
     default=None,
     envvar="MEMORY_BANK_DB",
-    help="Override Qdrant DB path",
+    metavar="DIR",
+    help="Override the Qdrant DB storage path. Env: [dim]MEMORY_BANK_DB[/dim].",
 )
 def ingest_claude_code(path, db):
-    """Ingest all Claude Code sessions from ~/.claude/projects/."""
+    """Ingest all Claude Code sessions from [dim]~/.claude/projects/[/dim].
+
+    Reads every [dim].jsonl[/dim] conversation file, embeds each message locally using
+    [cyan]BAAI/bge-small-en-v1.5[/cyan], and stores them in the vector DB.
+    Re-running is safe — duplicate messages are skipped automatically.
+
+    [bold]Examples:[/bold]
+
+      [cyan]memory-bank ingest claude-code[/cyan]
+      [cyan]memory-bank ingest claude-code -p ~/work/.claude/projects[/cyan]
+    """
     from .ingestors.claude_code import ClaudeCodeIngestor
 
     ingestor = ClaudeCodeIngestor(claude_dir=Path(path) if path else None)
@@ -73,21 +149,64 @@ def ingest_claude_code(path, db):
     "-p",
     type=click.Path(),
     required=True,
-    help="Path to exported conversations JSON file or directory",
+    metavar="FILE",
+    help="Path to your exported Claude Desktop conversations JSON file.",
 )
 @click.option(
     "--db",
     type=click.Path(),
     default=None,
     envvar="MEMORY_BANK_DB",
-    help="Override Qdrant DB path",
+    metavar="DIR",
+    help="Override the Qdrant DB storage path. Env: [dim]MEMORY_BANK_DB[/dim].",
 )
 def ingest_claude_desktop(path, db):
-    """Ingest Claude Desktop conversations from an exported JSON file."""
+    """Ingest conversations exported from the Claude Desktop app.
+
+    Export your history from Claude Desktop ([italic]Settings → Export[/italic]), then
+    point this command at the resulting JSON file or directory.
+
+    [bold]Examples:[/bold]
+
+      [cyan]memory-bank ingest claude-desktop -p ~/Downloads/claude_export.json[/cyan]
+    """
     from .ingestors.claude_desktop import ClaudeDesktopIngestor
 
     ingestor = ClaudeDesktopIngestor(path=Path(path))
     _run_ingest(ingestor, db_path=Path(db) if db else None)
+
+
+@ingest.command("all", context_settings=CONTEXT_SETTINGS)
+@click.option(
+    "--db",
+    type=click.Path(),
+    default=None,
+    envvar="MEMORY_BANK_DB",
+    metavar="DIR",
+    help="Override the Qdrant DB storage path. Env: [dim]MEMORY_BANK_DB[/dim].",
+)
+def ingest_all(db):
+    """Ingest from all auto-detectable sources at once.
+
+    Runs [cyan]claude-code[/cyan] automatically. Also runs [cyan]claude-desktop[/cyan] if its
+    default path is found — otherwise prints a skip notice.
+    """
+    from .ingestors.claude_code import ClaudeCodeIngestor
+    from .ingestors.claude_desktop import ClaudeDesktopIngestor
+
+    db_path = Path(db) if db else None
+    ingestors = [ClaudeCodeIngestor()]
+    desktop_ingestor = ClaudeDesktopIngestor()
+    if not desktop_ingestor.validate():
+        ingestors.append(desktop_ingestor)
+    else:
+        console.print(
+            "[yellow]Skipping Claude Desktop "
+            "(not found — run 'ingest claude-desktop -p ...' manually)[/yellow]"
+        )
+
+    for ingestor in ingestors:
+        _run_ingest(ingestor, db_path=db_path)
 
 
 @ingest.command("custom", context_settings=CONTEXT_SETTINGS)
@@ -134,34 +253,6 @@ There is no CLI flag for custom sources — use the Python API directly:
 """)
 
 
-@ingest.command("all", context_settings=CONTEXT_SETTINGS)
-@click.option(
-    "--db",
-    type=click.Path(),
-    default=None,
-    envvar="MEMORY_BANK_DB",
-    help="Override Qdrant DB path",
-)
-def ingest_all(db):
-    """Ingest from all auto-detectable sources (Claude Code + Claude Desktop if found)."""
-    from .ingestors.claude_code import ClaudeCodeIngestor
-    from .ingestors.claude_desktop import ClaudeDesktopIngestor
-
-    db_path = Path(db) if db else None
-    ingestors = [ClaudeCodeIngestor()]
-    desktop_ingestor = ClaudeDesktopIngestor()
-    if not desktop_ingestor.validate():
-        ingestors.append(desktop_ingestor)
-    else:
-        console.print(
-            "[yellow]Skipping Claude Desktop "
-            "(not found — run 'ingest claude-desktop --path ...' manually)[/yellow]"
-        )
-
-    for ingestor in ingestors:
-        _run_ingest(ingestor, db_path=db_path)
-
-
 # ---------------------------------------------------------------------------
 # search command
 # ---------------------------------------------------------------------------
@@ -175,29 +266,62 @@ ROLE_STYLES = {
 
 @cli.command(context_settings=CONTEXT_SETTINGS)
 @click.argument("query")
-@click.option("--limit", "-n", default=10, show_default=True, help="Number of results")
 @click.option(
-    "--source", "-s", default=None, help="Filter by source (claude-code, claude-desktop, ...)"
+    "--limit", "-n",
+    default=10,
+    show_default=True,
+    metavar="N",
+    help="Maximum number of results to return.",
 )
-@click.option("--project", "-p", default=None, help="Filter by project name")
 @click.option(
-    "--role",
-    "-r",
+    "--source", "-s",
+    default=None,
+    metavar="NAME",
+    help="Only return results from this source (e.g. [dim]claude-code[/dim], [dim]claude-desktop[/dim]).",
+)
+@click.option(
+    "--project", "-p",
+    default=None,
+    metavar="NAME",
+    help="Only return results from this project name.",
+)
+@click.option(
+    "--role", "-r",
     default=None,
     type=click.Choice(["user", "assistant"]),
-    help="Filter by message role",
+    help="Only return messages from this role.",
 )
-@click.option("--session", default=None, help="Filter by session ID")
+@click.option(
+    "--session",
+    default=None,
+    metavar="ID",
+    help="Only return results from a specific session ID.",
+)
 @click.option(
     "--db",
     type=click.Path(),
     default=None,
     envvar="MEMORY_BANK_DB",
-    help="Override Qdrant DB path",
+    metavar="DIR",
+    help="Override the Qdrant DB storage path. Env: [dim]MEMORY_BANK_DB[/dim].",
 )
-@click.option("--json", "as_json", is_flag=True, help="Output raw JSON (for agent use)")
+@click.option(
+    "--json", "as_json",
+    is_flag=True,
+    help="Emit raw JSON — useful for piping into other tools or agent scripts.",
+)
 def search(query, limit, source, project, role, session, db, as_json):
-    """Semantic search over ingested chat history."""
+    """Semantically search your ingested chat history.
+
+    Uses vector similarity to find messages that [italic]mean[/italic] what you're looking for,
+    not just messages that contain the exact words. Filters can be combined freely.
+
+    [bold]Examples:[/bold]
+
+      [cyan]memory-bank search "docker networking fix"[/cyan]
+      [cyan]memory-bank search "auth bug" -s claude-code -r assistant -n 5[/cyan]
+      [cyan]memory-bank search "deployment" -p my-project --json | jq '.[0].content'[/cyan]
+    """
     from .db import MemoryDB
 
     db_obj = MemoryDB(Path(db) if db else None)
@@ -271,10 +395,14 @@ def search(query, limit, source, project, role, session, db, as_json):
     type=click.Path(),
     default=None,
     envvar="MEMORY_BANK_DB",
-    help="Override Qdrant DB path",
+    metavar="DIR",
+    help="Override the Qdrant DB storage path. Env: [dim]MEMORY_BANK_DB[/dim].",
 )
 def stats(db):
-    """Show DB statistics."""
+    """Show a summary of what's in your memory bank.
+
+    Displays total message count, breakdown by source, and DB configuration.
+    """
     from rich.table import Table
 
     from .db import MemoryDB
@@ -290,7 +418,14 @@ def stats(db):
     info.add_row("Embedding model", s["embedding_model"])
     info.add_row("Total messages", f"[bold cyan]{s['total_messages']}[/bold cyan]")
 
-    console.print(Panel(info, title="[bold magenta]Memory Bank Stats[/bold magenta]", border_style="magenta", padding=(0, 1)))
+    console.print(
+        Panel(
+            info,
+            title="[bold magenta]Memory Bank Stats[/bold magenta]",
+            border_style="magenta",
+            padding=(0, 1),
+        )
+    )
 
     if s["by_source"]:
         tbl = Table(show_header=True, header_style="bold magenta", border_style="dim", box=None)
@@ -313,16 +448,28 @@ def stats(db):
     type=click.Path(),
     default=None,
     envvar="MEMORY_BANK_DB",
-    help="Override Qdrant DB path",
+    metavar="DIR",
+    help="Override the Qdrant DB storage path. Env: [dim]MEMORY_BANK_DB[/dim].",
 )
 @click.confirmation_option(prompt="Are you sure you want to delete all messages from this source?")
 def delete(source, db):
-    """Delete all messages from a given source."""
+    """Delete all ingested messages from a source.
+
+    [bold]SOURCE[/bold] must match the source name exactly (e.g. [dim]claude-code[/dim]).
+    Use [cyan]memory-bank stats[/cyan] to see available source names.
+
+    [bold]Example:[/bold]
+
+      [cyan]memory-bank delete claude-desktop[/cyan]
+    """
     from .db import MemoryDB
 
     db_obj = MemoryDB(Path(db) if db else None)
     n = db_obj.delete_by_source(source)
-    console.print(f"[bold green]Deleted[/bold green] [cyan]{n}[/cyan] messages from source '[bold]{source}[/bold]'.")
+    console.print(
+        f"[bold green]Deleted[/bold green] [cyan]{n}[/cyan] messages "
+        f"from source '[bold]{source}[/bold]'."
+    )
 
 
 # ---------------------------------------------------------------------------
