@@ -74,15 +74,8 @@ class MemoryDB:
         self.path = path or get_db_path()
         self.path.mkdir(parents=True, exist_ok=True)
         self._client = QdrantClient(path=str(self.path))
-        self._embedder = _load_embedder()
-        if self._embedder is None:
-            import sys
-            print(
-                "[warning] fastembed model unavailable (no internet?). "
-                "Using hash-based fallback embeddings — semantic search quality will be reduced. "
-                "Re-ingest once online to get full quality.",
-                file=sys.stderr,
-            )
+        self._embedder = None   # loaded on first call to _embed()
+        self._embedder_loaded = False
         self._ensure_collection()
 
     def _ensure_collection(self) -> None:
@@ -200,6 +193,17 @@ class MemoryDB:
     # ------------------------------------------------------------------
 
     def _embed(self, texts: list[str]) -> list[list[float]]:
+        if not self._embedder_loaded:
+            self._embedder = _load_embedder()
+            self._embedder_loaded = True
+            if self._embedder is None:
+                import sys
+                print(
+                    "[warning] fastembed model unavailable (no internet?). "
+                    "Using hash-based fallback embeddings — semantic search quality will be reduced. "
+                    "Re-ingest once online to get full quality.",
+                    file=sys.stderr,
+                )
         if self._embedder is not None:
             return [vec.tolist() for vec in self._embedder.embed(texts)]
         return [_hash_embed(t) for t in texts]
