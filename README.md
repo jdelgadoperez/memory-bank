@@ -5,7 +5,7 @@ Local vector DB for ingesting and searching Claude chat histories. Ask Claude "w
 ## Install
 
 ```bash
-uv pip install -e .
+uv sync
 ```
 
 ## Quick start
@@ -20,6 +20,13 @@ memory-bank search "authentication bug fix"
 # Stats
 memory-bank stats
 ```
+
+## Sources
+
+| Source | Data | Default path |
+|---|---|---|
+| `claude-code` | Claude Code session histories (`*.jsonl`) | `~/.claude/projects/` |
+| `claude-desktop` | Claude Desktop exported conversations | _(requires `--path`)_ |
 
 ## Commands
 
