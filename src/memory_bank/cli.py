@@ -34,6 +34,10 @@ click.rich_click.COMMAND_GROUPS = {
             "name": "Query & Manage",
             "commands": ["search", "stats", "delete"],
         },
+        {
+            "name": "Hooks",
+            "commands": ["hooks"],
+        },
     ],
     "memory-bank ingest": [
         {
@@ -470,6 +474,202 @@ def delete(source, db):
         f"[bold green]Deleted[/bold green] [cyan]{n}[/cyan] messages "
         f"from source '[bold]{source}[/bold]'."
     )
+
+
+# ---------------------------------------------------------------------------
+# hooks command group
+# ---------------------------------------------------------------------------
+
+_SETTINGS_PATH = Path("~/.claude/settings.json").expanduser()
+
+# The command that the hook will run.  We background it so Stop completes fast.
+_HOOK_COMMAND = (
+    "memory-bank ingest claude-code"
+    " >> ~/.memory-bank/ingest.log 2>&1 &"
+)
+
+# Sentinel used to detect already-installed hooks.
+_HOOK_MARKER = "memory-bank ingest claude-code"
+
+
+def _load_settings() -> dict:
+    if _SETTINGS_PATH.exists():
+        import json
+        return json.loads(_SETTINGS_PATH.read_text())
+    return {}
+
+
+def _save_settings(settings: dict) -> None:
+    import json
+    _SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _SETTINGS_PATH.write_text(json.dumps(settings, indent=2) + "\n")
+
+
+def _hook_entry(hook_type: str) -> dict:
+    return {
+        "matcher": "",
+        "hooks": [{"type": "command", "command": _HOOK_COMMAND}],
+    }
+
+
+def _is_installed(settings: dict, hook_type: str) -> bool:
+    for entry in settings.get("hooks", {}).get(hook_type, []):
+        for h in entry.get("hooks", []):
+            if _HOOK_MARKER in h.get("command", ""):
+                return True
+    return False
+
+
+@cli.group(context_settings=CONTEXT_SETTINGS)
+def hooks():
+    """Install or remove Claude Code auto-ingest hooks.
+
+    Hooks run memory-bank ingest automatically at the end of every
+    Claude Code session so your vector DB stays up to date without
+    any manual steps.
+
+    \b
+    Quick start:
+      memory-bank hooks install           # adds a Stop hook
+      memory-bank hooks install --on start  # adds a SessionStart hook instead
+      memory-bank hooks status
+      memory-bank hooks uninstall
+    """
+
+
+@hooks.command(context_settings=CONTEXT_SETTINGS)
+@click.option(
+    "--on",
+    "trigger",
+    type=click.Choice(["stop", "start", "both"]),
+    default="stop",
+    show_default=True,
+    help=(
+        "Which Claude Code hook event to attach to.\n\n"
+        "stop  = after each session ends (recommended)\n"
+        "start = when a new session begins\n"
+        "both  = both events"
+    ),
+)
+@click.option(
+    "--settings",
+    "settings_path",
+    type=click.Path(),
+    default=None,
+    metavar="FILE",
+    help="Override path to settings.json. Defaults to ~/.claude/settings.json.",
+)
+def install(trigger, settings_path):
+    """Add auto-ingest hook(s) to ~/.claude/settings.json.
+
+    Appends an entry to the Stop and/or SessionStart hook list.  Existing
+    hooks are preserved.  Re-running is safe — already-installed hooks are
+    skipped.
+
+    \b
+    Examples:
+      memory-bank hooks install
+      memory-bank hooks install --on both
+      memory-bank hooks install --settings /path/to/settings.json
+    """
+    path = Path(settings_path).expanduser() if settings_path else _SETTINGS_PATH
+    settings = _load_settings() if path == _SETTINGS_PATH else (
+        {} if not path.exists() else __import__("json").loads(path.read_text())
+    )
+    hooks_cfg = settings.setdefault("hooks", {})
+
+    event_map = {
+        "stop": ["Stop"],
+        "start": ["SessionStart"],
+        "both": ["Stop", "SessionStart"],
+    }
+    events = event_map[trigger]
+    installed_any = False
+
+    for event in events:
+        if _is_installed(settings, event):
+            console.print(f"[yellow]Already installed:[/yellow] {event} hook — skipping.")
+            continue
+        hooks_cfg.setdefault(event, []).append(_hook_entry(event))
+        console.print(f"[bold green]Installed:[/bold green] {event} hook → [dim]{_HOOK_COMMAND}[/dim]")
+        installed_any = True
+
+    if installed_any:
+        import json
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(settings, indent=2) + "\n")
+        console.print(f"[dim]Saved to {path}[/dim]")
+    else:
+        console.print("[dim]Nothing changed.[/dim]")
+
+
+@hooks.command(context_settings=CONTEXT_SETTINGS)
+@click.option(
+    "--settings",
+    "settings_path",
+    type=click.Path(),
+    default=None,
+    metavar="FILE",
+    help="Override path to settings.json.",
+)
+def uninstall(settings_path):
+    """Remove all memory-bank auto-ingest hooks from ~/.claude/settings.json."""
+    path = Path(settings_path).expanduser() if settings_path else _SETTINGS_PATH
+    if not path.exists():
+        console.print("[yellow]No settings.json found — nothing to remove.[/yellow]")
+        return
+
+    import json
+    settings = json.loads(path.read_text())
+    removed = False
+
+    for event in list(settings.get("hooks", {}).keys()):
+        before = settings["hooks"][event]
+        after = [
+            entry for entry in before
+            if not any(_HOOK_MARKER in h.get("command", "") for h in entry.get("hooks", []))
+        ]
+        if len(after) < len(before):
+            if after:
+                settings["hooks"][event] = after
+            else:
+                del settings["hooks"][event]
+            console.print(f"[bold green]Removed:[/bold green] {event} hook.")
+            removed = True
+
+    if removed:
+        path.write_text(json.dumps(settings, indent=2) + "\n")
+        console.print(f"[dim]Saved to {path}[/dim]")
+    else:
+        console.print("[yellow]No memory-bank hooks found.[/yellow]")
+
+
+@hooks.command(context_settings=CONTEXT_SETTINGS)
+@click.option(
+    "--settings",
+    "settings_path",
+    type=click.Path(),
+    default=None,
+    metavar="FILE",
+    help="Override path to settings.json.",
+)
+def status(settings_path):
+    """Show whether auto-ingest hooks are currently installed."""
+    path = Path(settings_path).expanduser() if settings_path else _SETTINGS_PATH
+    if not path.exists():
+        console.print(f"[yellow]No settings.json found at {path}[/yellow]")
+        return
+
+    import json
+    settings = json.loads(path.read_text())
+
+    for event in ("Stop", "SessionStart"):
+        if _is_installed(settings, event):
+            console.print(f"[bold green]✓[/bold green]  {event} hook  [dim]installed[/dim]")
+        else:
+            console.print(f"[dim]✗  {event} hook  not installed[/dim]")
+
+    console.print(f"\n[dim]Settings file: {path}[/dim]")
 
 
 # ---------------------------------------------------------------------------

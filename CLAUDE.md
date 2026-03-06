@@ -32,6 +32,29 @@ memory-bank stats
 | `CLAUDE_DESKTOP_PATH` | `~/Library/Application Support/Claude` | Override Claude Desktop source path |
 | `ANTHROPIC_API_KEY` | — | Required for the search agent script |
 
+## Auto-ingest via hooks
+
+Keep your DB current automatically by hooking into Claude Code's session lifecycle:
+
+```bash
+# Install a Stop hook (runs after each session — recommended)
+memory-bank hooks install
+
+# Or hook into SessionStart instead, or both
+memory-bank hooks install --on start
+memory-bank hooks install --on both
+
+# Check what's installed
+memory-bank hooks status
+
+# Remove all memory-bank hooks
+memory-bank hooks uninstall
+```
+
+The hook runs `memory-bank ingest claude-code` in the background and appends
+output to `~/.memory-bank/ingest.log`.  Your existing hooks in
+`~/.claude/settings.json` are preserved.
+
 ## CLI reference
 
 ```
@@ -42,6 +65,9 @@ memory-bank ingest custom          # show Python API usage for custom sources
 memory-bank search QUERY [--limit N] [--source SOURCE] [--project PROJECT] [--role user|assistant] [--json]
 memory-bank stats
 memory-bank delete SOURCE
+memory-bank hooks install [--on stop|start|both]
+memory-bank hooks uninstall
+memory-bank hooks status
 ```
 
 ## Adding a custom data source
