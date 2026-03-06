@@ -487,7 +487,7 @@ def delete(source, db):
     default=6333,
     show_default=True,
     metavar="PORT",
-    help="Local port to expose the Qdrant UI on.",
+    help="Local port for the web UI.",
 )
 @click.option(
     "--no-browser",
@@ -503,75 +503,269 @@ def delete(source, db):
     help="Override the Qdrant DB storage path. Env: [dim]MEMORY_BANK_DB[/dim].",
 )
 def ui(port, no_browser, db):
-    """Launch the Qdrant web UI to browse your memory bank visually.
+    """Launch a web UI to browse and search your memory bank.
 
-    Starts the official Qdrant Docker image mounted on your local DB, then
-    opens [cyan]http://localhost:6333/dashboard[/cyan] (or the port you choose)
-    in your browser. Press [bold]Ctrl+C[/bold] to stop the server.
-
-    Requires Docker (https://docs.docker.com/get-docker/).
+    Starts a local HTTP server and opens your browser to the UI.
+    Press [bold]Ctrl+C[/bold] to stop.
 
     \b
     Examples:
       memory-bank ui
-      memory-bank ui --port 6334
+      memory-bank ui --port 8080
       memory-bank ui --no-browser
     """
-    import shutil
-    import subprocess
+    import json
+    import threading
     import time
     import webbrowser
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from urllib.parse import parse_qs, urlparse
 
-    from .db import get_db_path
+    from .db import MemoryDB, get_db_path
 
     db_path = Path(db).expanduser() if db else get_db_path()
+    memory_db = MemoryDB(path=db_path)
 
-    if not shutil.which("docker"):
-        console.print(
-            "[bold red]Error:[/bold red] Docker is required but not found in PATH.\n"
-            "[dim]Install it from https://docs.docker.com/get-docker/[/dim]"
-        )
-        raise SystemExit(1)
+    # ------------------------------------------------------------------
+    # HTML template (single-page app, no external deps)
+    # ------------------------------------------------------------------
+    HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Memory Bank</title>
+<style>
+  :root{--bg:#0f1117;--surface:#1a1d27;--border:#2a2d3a;--accent:#7c6af7;--accent2:#a78bfa;--text:#e2e8f0;--muted:#64748b;--user:#3b82f6;--assistant:#10b981;--gap:1rem}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font:14px/1.6 system-ui,sans-serif;min-height:100vh;display:flex;flex-direction:column}
+  header{background:var(--surface);border-bottom:1px solid var(--border);padding:.75rem var(--gap);display:flex;align-items:center;gap:.75rem}
+  header h1{font-size:1.1rem;font-weight:700;color:var(--accent2)}
+  header span{color:var(--muted);font-size:.8rem}
+  #stats-bar{display:flex;gap:1.5rem;margin-left:auto;font-size:.8rem;color:var(--muted)}
+  #stats-bar b{color:var(--text)}
+  main{display:flex;flex:1;gap:0;overflow:hidden}
+  aside{width:220px;flex-shrink:0;background:var(--surface);border-right:1px solid var(--border);padding:var(--gap);display:flex;flex-direction:column;gap:.5rem}
+  aside h2{font-size:.7rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-bottom:.25rem}
+  .filter-group{display:flex;flex-direction:column;gap:.35rem}
+  select,input{background:#0f1117;border:1px solid var(--border);color:var(--text);border-radius:6px;padding:.4rem .6rem;font-size:.82rem;width:100%}
+  select:focus,input:focus{outline:none;border-color:var(--accent)}
+  #content{flex:1;display:flex;flex-direction:column;overflow:hidden}
+  #search-bar{padding:var(--gap);display:flex;gap:.5rem;border-bottom:1px solid var(--border)}
+  #search-bar input{flex:1;font-size:.95rem;padding:.5rem .75rem}
+  button{background:var(--accent);color:#fff;border:none;border-radius:6px;padding:.5rem 1.1rem;font-size:.85rem;cursor:pointer;white-space:nowrap}
+  button:hover{background:var(--accent2)}
+  button:disabled{opacity:.4;cursor:default}
+  #results{flex:1;overflow-y:auto;padding:var(--gap);display:flex;flex-direction:column;gap:.75rem}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:1rem;transition:border-color .15s}
+  .card:hover{border-color:var(--accent)}
+  .card-meta{display:flex;gap:.75rem;align-items:center;margin-bottom:.5rem;flex-wrap:wrap}
+  .badge{font-size:.7rem;padding:.15rem .5rem;border-radius:999px;font-weight:600}
+  .role-user{background:#1e3a5f;color:var(--user)}
+  .role-assistant{background:#064e3b;color:var(--assistant)}
+  .source-badge{background:#1e1b4b;color:var(--accent2)}
+  .score{margin-left:auto;font-size:.75rem;color:var(--muted)}
+  .project{color:var(--muted);font-size:.75rem}
+  .ts{color:var(--muted);font-size:.72rem}
+  .card-content{white-space:pre-wrap;word-break:break-word;font-size:.85rem;line-height:1.65;max-height:300px;overflow-y:auto;color:#cbd5e1}
+  .card-content.expanded{max-height:none}
+  .expand-btn{background:none;border:none;color:var(--accent);font-size:.75rem;padding:.2rem 0;cursor:pointer;margin-top:.4rem}
+  #empty{text-align:center;color:var(--muted);padding:3rem;display:none}
+  #loading{text-align:center;color:var(--muted);padding:3rem;display:none}
+  .err{color:#f87171;font-size:.82rem;padding:.5rem var(--gap)}
+</style>
+</head>
+<body>
+<header>
+  <h1>&#x1F9E0; Memory Bank</h1>
+  <span id="db-path"></span>
+  <div id="stats-bar">
+    <span>Messages: <b id="stat-total">…</b></span>
+    <span id="stat-sources"></span>
+  </div>
+</header>
+<main>
+  <aside>
+    <h2>Filters</h2>
+    <div class="filter-group">
+      <label style="font-size:.75rem;color:var(--muted)">Source</label>
+      <select id="f-source"><option value="">All sources</option></select>
+    </div>
+    <div class="filter-group">
+      <label style="font-size:.75rem;color:var(--muted)">Role</label>
+      <select id="f-role">
+        <option value="">Both</option>
+        <option value="user">User</option>
+        <option value="assistant">Assistant</option>
+      </select>
+    </div>
+    <div class="filter-group">
+      <label style="font-size:.75rem;color:var(--muted)">Project</label>
+      <input id="f-project" placeholder="any project…">
+    </div>
+    <div class="filter-group">
+      <label style="font-size:.75rem;color:var(--muted)">Limit</label>
+      <select id="f-limit">
+        <option value="10">10</option>
+        <option value="25" selected>25</option>
+        <option value="50">50</option>
+        <option value="100">100</option>
+      </select>
+    </div>
+  </aside>
+  <div id="content">
+    <div id="search-bar">
+      <input id="q" placeholder="Search your chat history…" autofocus>
+      <button id="search-btn" onclick="doSearch()">Search</button>
+    </div>
+    <div class="err" id="err-msg"></div>
+    <div id="loading">Searching…</div>
+    <div id="empty">No results. Try a different query or adjust the filters.</div>
+    <div id="results"></div>
+  </div>
+</main>
+<script>
+async function loadStats(){
+  try{
+    const d=await fetch('/api/stats').then(r=>r.json());
+    document.getElementById('stat-total').textContent=d.total_messages.toLocaleString();
+    document.getElementById('db-path').textContent=d.db_path;
+    const sources=Object.keys(d.by_source||{});
+    const sel=document.getElementById('f-source');
+    sources.forEach(s=>{const o=document.createElement('option');o.value=s;o.textContent=s+' ('+d.by_source[s]+')';sel.appendChild(o);});
+    const bar=sources.map(s=>`<span>${s}: <b>${d.by_source[s]}</b></span>`).join(' &nbsp;·&nbsp; ');
+    document.getElementById('stat-sources').innerHTML=bar;
+  }catch(e){console.error(e)}
+}
 
-    url = f"http://localhost:{port}/dashboard"
+async function doSearch(){
+  const q=document.getElementById('q').value.trim();
+  if(!q)return;
+  const btn=document.getElementById('search-btn');
+  btn.disabled=true;
+  document.getElementById('loading').style.display='block';
+  document.getElementById('results').innerHTML='';
+  document.getElementById('empty').style.display='none';
+  document.getElementById('err-msg').textContent='';
+  const params=new URLSearchParams({q,
+    limit:document.getElementById('f-limit').value,
+    source:document.getElementById('f-source').value,
+    role:document.getElementById('f-role').value,
+    project:document.getElementById('f-project').value,
+  });
+  try{
+    const data=await fetch('/api/search?'+params).then(r=>r.json());
+    document.getElementById('loading').style.display='none';
+    btn.disabled=false;
+    if(!data.length){document.getElementById('empty').style.display='block';return;}
+    const div=document.getElementById('results');
+    data.forEach(r=>{
+      const ts=r.timestamp?new Date(r.timestamp*1000).toLocaleString():'';
+      const score=r.score!=null?`<span class="score">score ${r.score.toFixed(3)}</span>`:'';
+      const proj=r.project?`<span class="project">📁 ${r.project}</span>`:'';
+      const card=document.createElement('div');card.className='card';
+      card.innerHTML=`
+        <div class="card-meta">
+          <span class="badge role-${r.role}">${r.role}</span>
+          <span class="badge source-badge">${r.source||''}</span>
+          ${proj}
+          <span class="ts">${ts}</span>
+          ${score}
+        </div>
+        <div class="card-content" id="cc-${Math.random().toString(36).slice(2)}">${escHtml(r.content||'')}</div>
+      `;
+      const cc=card.querySelector('.card-content');
+      if(cc.scrollHeight>310){
+        const btn2=document.createElement('button');
+        btn2.className='expand-btn';btn2.textContent='Show more';
+        btn2.onclick=()=>{cc.classList.toggle('expanded');btn2.textContent=cc.classList.contains('expanded')?'Show less':'Show more';};
+        card.appendChild(btn2);
+      }
+      div.appendChild(card);
+    });
+  }catch(e){
+    document.getElementById('loading').style.display='none';
+    btn.disabled=false;
+    document.getElementById('err-msg').textContent='Error: '+e.message;
+  }
+}
+
+function escHtml(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+
+document.getElementById('q').addEventListener('keydown',e=>{if(e.key==='Enter')doSearch();});
+loadStats();
+</script>
+</body>
+</html>"""
+
+    # ------------------------------------------------------------------
+    # Request handler
+    # ------------------------------------------------------------------
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, fmt, *args):  # silence default access log
+            pass
+
+        def send_json(self, data, status=200):
+            body = json.dumps(data).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_GET(self):
+            parsed = urlparse(self.path)
+            path = parsed.path
+
+            if path in ("/", "/ui"):
+                body = HTML.encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            elif path == "/api/stats":
+                self.send_json(memory_db.stats())
+
+            elif path == "/api/search":
+                qs = parse_qs(parsed.query)
+                q = qs.get("q", [""])[0].strip()
+                if not q:
+                    self.send_json({"error": "missing query"}, 400)
+                    return
+                limit = int(qs.get("limit", ["25"])[0])
+                source = qs.get("source", [""])[0] or None
+                role = qs.get("role", [""])[0] or None
+                project = qs.get("project", [""])[0] or None
+                results = memory_db.search(
+                    q, limit=limit, source=source, role=role, project=project
+                )
+                self.send_json(results)
+
+            else:
+                self.send_response(404)
+                self.end_headers()
+
+    # ------------------------------------------------------------------
+    # Start server
+    # ------------------------------------------------------------------
+    server = HTTPServer(("127.0.0.1", port), Handler)
+    url = f"http://localhost:{port}"
     console.print(
-        f"[bold magenta]Starting Qdrant UI[/bold magenta]  "
-        f"[cyan]{url}[/cyan]"
+        f"[bold magenta]Memory Bank UI[/bold magenta]  [cyan]{url}[/cyan]"
     )
     console.print(f"[dim]DB: {db_path}[/dim]")
     console.print("[dim]Press Ctrl+C to stop.[/dim]\n")
 
-    cmd = [
-        "docker", "run", "--rm",
-        "--name", "memory-bank-ui",
-        "-p", f"{port}:6333",
-        "-v", f"{db_path}:/qdrant/storage",
-        "qdrant/qdrant",
-    ]
+    if not no_browser:
+        threading.Timer(0.4, lambda: webbrowser.open(url)).start()
 
     try:
-        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        if not no_browser:
-            # Poll until the server is up (max ~10 s) before opening the browser.
-            import urllib.request
-            health_url = f"http://localhost:{port}/healthz"
-            for _ in range(20):
-                time.sleep(0.5)
-                try:
-                    urllib.request.urlopen(health_url, timeout=1)
-                    break
-                except Exception:
-                    pass
-            webbrowser.open(url)
-        proc.wait()
+        server.serve_forever()
     except KeyboardInterrupt:
-        console.print("\n[dim]Stopping Qdrant server…[/dim]")
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-        console.print("[dim]Stopped.[/dim]")
+        console.print("\n[dim]Stopped.[/dim]")
+        server.shutdown()
 
 
 # ---------------------------------------------------------------------------
