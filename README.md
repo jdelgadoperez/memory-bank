@@ -35,10 +35,11 @@ source .venv/bin/activate
 uv run memory-bank stats
 ```
 
-**Tip — add a shell alias** so `memory-bank` works from any directory without activating the venv. Add this to your `~/.zshrc` or `~/.bashrc`:
+**Tip — add a shell alias** so `memory-bank` works from any directory without activating the venv. Point directly at the venv binary for instant startup (avoid `uv run` here — it re-resolves the environment on every call and adds ~10s overhead):
 
 ```bash
-alias memory-bank="uv run --project /path/to/memory-bank memory-bank"
+alias memory-bank="/path/to/memory-bank/.venv/bin/memory-bank"
+alias mb="memory-bank"
 ```
 
 Replace `/path/to/memory-bank` with the actual clone location (e.g. `~/code/memory-bank`). Then reload your shell:
