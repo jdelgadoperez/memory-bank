@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=42"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "memory-bank"
+version = "0.1.0"
+description = "Ingest and search Claude chat histories using a local vector DB"
+requires-python = ">=3.11"
+dependencies = [
+    "qdrant-client[fastembed]>=1.9.0",
+    "click>=8.1",
+    "anthropic>=0.40.0",
+    "python-dateutil>=2.9",
+    "rich>=13.0",
+]
+
+[project.scripts]
+memory-bank = "memory_bank.cli:cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]
