@@ -32,7 +32,7 @@ click.rich_click.COMMAND_GROUPS = {
         },
         {
             "name": "Query & Manage",
-            "commands": ["search", "stats", "delete"],
+            "commands": ["search", "stats", "delete", "ui"],
         },
         {
             "name": "Hooks",
@@ -474,6 +474,104 @@ def delete(source, db):
         f"[bold green]Deleted[/bold green] [cyan]{n}[/cyan] messages "
         f"from source '[bold]{source}[/bold]'."
     )
+
+
+# ---------------------------------------------------------------------------
+# ui command
+# ---------------------------------------------------------------------------
+
+
+@cli.command(context_settings=CONTEXT_SETTINGS)
+@click.option(
+    "--port", "-p",
+    default=6333,
+    show_default=True,
+    metavar="PORT",
+    help="Local port to expose the Qdrant UI on.",
+)
+@click.option(
+    "--no-browser",
+    is_flag=True,
+    help="Start the server but don't open a browser tab.",
+)
+@click.option(
+    "--db",
+    type=click.Path(),
+    default=None,
+    envvar="MEMORY_BANK_DB",
+    metavar="DIR",
+    help="Override the Qdrant DB storage path. Env: [dim]MEMORY_BANK_DB[/dim].",
+)
+def ui(port, no_browser, db):
+    """Launch the Qdrant web UI to browse your memory bank visually.
+
+    Starts the official Qdrant Docker image mounted on your local DB, then
+    opens [cyan]http://localhost:6333/dashboard[/cyan] (or the port you choose)
+    in your browser. Press [bold]Ctrl+C[/bold] to stop the server.
+
+    Requires Docker (https://docs.docker.com/get-docker/).
+
+    \b
+    Examples:
+      memory-bank ui
+      memory-bank ui --port 6334
+      memory-bank ui --no-browser
+    """
+    import shutil
+    import subprocess
+    import time
+    import webbrowser
+
+    from .db import get_db_path
+
+    db_path = Path(db).expanduser() if db else get_db_path()
+
+    if not shutil.which("docker"):
+        console.print(
+            "[bold red]Error:[/bold red] Docker is required but not found in PATH.\n"
+            "[dim]Install it from https://docs.docker.com/get-docker/[/dim]"
+        )
+        raise SystemExit(1)
+
+    url = f"http://localhost:{port}/dashboard"
+    console.print(
+        f"[bold magenta]Starting Qdrant UI[/bold magenta]  "
+        f"[cyan]{url}[/cyan]"
+    )
+    console.print(f"[dim]DB: {db_path}[/dim]")
+    console.print("[dim]Press Ctrl+C to stop.[/dim]\n")
+
+    cmd = [
+        "docker", "run", "--rm",
+        "--name", "memory-bank-ui",
+        "-p", f"{port}:6333",
+        "-v", f"{db_path}:/qdrant/storage",
+        "qdrant/qdrant",
+    ]
+
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if not no_browser:
+            # Poll until the server is up (max ~10 s) before opening the browser.
+            import urllib.request
+            health_url = f"http://localhost:{port}/healthz"
+            for _ in range(20):
+                time.sleep(0.5)
+                try:
+                    urllib.request.urlopen(health_url, timeout=1)
+                    break
+                except Exception:
+                    pass
+            webbrowser.open(url)
+        proc.wait()
+    except KeyboardInterrupt:
+        console.print("\n[dim]Stopping Qdrant server…[/dim]")
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        console.print("[dim]Stopped.[/dim]")
 
 
 # ---------------------------------------------------------------------------
