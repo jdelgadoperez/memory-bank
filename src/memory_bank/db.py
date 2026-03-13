@@ -200,6 +200,8 @@ class MemoryDB:
         project: str | None = None,
         role: str | None = None,
         session_id: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
     ) -> list[dict[str, Any]]:
         """Semantic search across messages with optional metadata filters."""
         query_vec = self._embed([query])[0]
@@ -207,25 +209,27 @@ class MemoryDB:
             source=source, project=project, role=role, session_id=session_id
         )
 
+        # Fetch extra results if date filtering will reduce the set
+        fetch_limit = limit * 3 if (date_from or date_to) else limit
         response = self._client.query_points(
             collection_name=MESSAGES_COLLECTION,
             query=query_vec,
             query_filter=flt,
-            limit=limit,
+            limit=fetch_limit,
             with_payload=True,
         )
-        results = []
-        for r in response.points:
-            entry = {"score": r.score, **r.payload}
-            # Include the session point ID so the UI can link to the detail view
-            sid = r.payload.get("session_id", "")
-            src = r.payload.get("source", "")
-            if sid and src:
-                entry["session_point_id"] = _id_to_uint(
-                    Session.make_id(src, sid)
-                )
-            results.append(entry)
-        return results
+        results = [
+            {"score": r.score, **r.payload}
+            for r in response.points
+        ]
+
+        if date_from:
+            results = [r for r in results if r.get("timestamp", "") >= date_from]
+        if date_to:
+            date_to_end = date_to + "T23:59:59.999Z"
+            results = [r for r in results if r.get("timestamp", "") <= date_to_end]
+
+        return results[:limit]
 
     # ------------------------------------------------------------------
     # Search — sessions
@@ -250,7 +254,7 @@ class MemoryDB:
             with_payload=True,
         )
         return [
-            {"score": r.score, "point_id": r.id, **r.payload}
+            {"score": r.score, **r.payload}
             for r in response.points
         ]
 
@@ -263,6 +267,8 @@ class MemoryDB:
         limit: int = 50,
         source: str | None = None,
         project: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
     ) -> list[dict[str, Any]]:
         """List sessions sorted by last_timestamp descending."""
         flt = self._build_filter(source=source, project=project)
@@ -272,32 +278,45 @@ class MemoryDB:
         while True:
             records, offset = self._client.scroll(
                 collection_name=SESSIONS_COLLECTION,
-                limit=min(limit, 1000),
+                limit=1000,
                 offset=offset,
                 scroll_filter=flt,
                 with_payload=True,
             )
             for r in records:
-                all_sessions.append({"point_id": r.id, **r.payload})
-            if offset is None or len(all_sessions) >= limit:
+                all_sessions.append(r.payload)
+            if offset is None:
                 break
+
+        if date_from:
+            all_sessions = [
+                s for s in all_sessions
+                if s.get("last_timestamp", "") >= date_from
+            ]
+        if date_to:
+            date_to_end = date_to + "T23:59:59.999Z"
+            all_sessions = [
+                s for s in all_sessions
+                if s.get("first_timestamp", "") <= date_to_end
+            ]
 
         all_sessions.sort(
             key=lambda s: s.get("last_timestamp", ""), reverse=True
         )
         return all_sessions[:limit]
 
-    def get_session(self, point_id: int) -> dict[str, Any] | None:
-        """Get a single session by its Qdrant point ID."""
-        results = self._client.retrieve(
+    def get_session_by_id(self, session_id: str) -> dict[str, Any] | None:
+        """Get a single session by its session_id (UUID)."""
+        flt = self._build_filter(session_id=session_id)
+        records, _ = self._client.scroll(
             collection_name=SESSIONS_COLLECTION,
-            ids=[point_id],
+            limit=1,
+            scroll_filter=flt,
             with_payload=True,
         )
-        if not results:
+        if not records:
             return None
-        r = results[0]
-        return {"point_id": r.id, **r.payload}
+        return records[0].payload
 
     def get_session_messages(
         self,
