@@ -638,6 +638,14 @@ def ui(port, no_browser, db):
       <input type="text" id="f-project" placeholder="any project...">
     </div>
     <div class="filter-group">
+      <label style="font-size:.75rem;color:var(--muted)">From</label>
+      <input type="date" id="f-date-from" style="width:100%">
+    </div>
+    <div class="filter-group">
+      <label style="font-size:.75rem;color:var(--muted)">To</label>
+      <input type="date" id="f-date-to" style="width:100%">
+    </div>
+    <div class="filter-group">
       <label style="font-size:.75rem;color:var(--muted)">Limit</label>
       <select id="f-limit">
         <option value="25">25</option>
@@ -705,6 +713,8 @@ async function loadSessions(){
     limit:document.getElementById('f-limit').value,
     source:document.getElementById('f-source').value,
     project:document.getElementById('f-project').value,
+    date_from:document.getElementById('f-date-from').value,
+    date_to:document.getElementById('f-date-to').value,
   });
   try{
     const data=await fetch('/api/sessions?'+params).then(r=>r.json());
@@ -726,7 +736,7 @@ async function loadSessions(){
         +'<td class="muted-cell">'+dateRange+'</td>'
         +'<td style="text-align:center">'+s.message_count+'</td>'
         +'<td class="muted-cell">'+escHtml(model)+'</td>';
-      tr.onclick=()=>loadDetail(s.point_id,s);
+      tr.onclick=()=>loadDetail(s.session_id,s);
       tbody.appendChild(tr);
     });
     table.appendChild(tbody);
@@ -738,14 +748,14 @@ async function loadSessions(){
 }
 
 // --- Session detail ---
-async function loadDetail(pointId,sessionMeta){
-  history.pushState({view:'detail',pointId},'','#session/'+pointId);
-  currentDetail=pointId;
+async function loadDetail(sessionId,sessionMeta){
+  history.pushState({view:'detail',sessionId},'','#session/'+sessionId);
+  currentDetail=sessionId;
   const area=document.getElementById('view-area');
   area.innerHTML='';
   document.getElementById('loading').style.display='block';
   try{
-    const data=await fetch('/api/sessions/'+pointId).then(r=>r.json());
+    const data=await fetch('/api/sessions/'+encodeURIComponent(sessionId)).then(r=>r.json());
     document.getElementById('loading').style.display='none';
     if(data.error){document.getElementById('err-msg').textContent=data.error;return;}
     const session=data.session;
@@ -813,6 +823,8 @@ async function doSearch(){
     source:document.getElementById('f-source').value,
     role:document.getElementById('f-role').value,
     project:document.getElementById('f-project').value,
+    date_from:document.getElementById('f-date-from').value,
+    date_to:document.getElementById('f-date-to').value,
   });
   try{
     const data=await fetch('/api/search?'+params).then(r=>r.json());
@@ -824,7 +836,7 @@ async function doSearch(){
       const ts=fmtDateTime(r.timestamp);
       const score=r.score!=null?'<span class="score">score '+r.score.toFixed(3)+'</span>':'';
       const proj=r.project?'<span style="color:var(--muted);font-size:.75rem">'+escHtml(r.project)+'</span>':'';
-      const sessionLink=r.session_point_id?'<button class="session-link" onclick="event.stopPropagation();loadDetailFromSearch('+r.session_point_id+')">View session</button>':'';
+      const sessionLink=r.session_id?'<button class="session-link" onclick="event.stopPropagation();loadDetailFromSearch(\''+escHtml(r.session_id)+'\')">View session</button>':'';
       const card=document.createElement('div');card.className='card';
       card.innerHTML='<div class="card-meta">'
         +'<span class="badge role-'+r.role+'">'+r.role+'</span>'
@@ -850,9 +862,9 @@ async function doSearch(){
   }
 }
 
-function loadDetailFromSearch(pointId){
+function loadDetailFromSearch(sessionId){
   switchTab('sessions');
-  loadDetail(pointId,{});
+  loadDetail(sessionId,{});
 }
 
 document.getElementById('q').addEventListener('keydown',e=>{if(e.key==='Enter')doSearch();});
@@ -896,22 +908,23 @@ loadStats().then(()=>loadSessions());
                 limit = int(qs.get("limit", ["50"])[0])
                 source = qs.get("source", [""])[0] or None
                 project = qs.get("project", [""])[0] or None
+                date_from = qs.get("date_from", [""])[0] or None
+                date_to = qs.get("date_to", [""])[0] or None
                 results = memory_db.list_sessions(
-                    limit=limit, source=source, project=project
+                    limit=limit, source=source, project=project,
+                    date_from=date_from, date_to=date_to,
                 )
                 self.send_json(results)
 
             elif path.startswith("/api/sessions/"):
-                try:
-                    point_id = int(path.split("/")[-1])
-                except ValueError:
-                    self.send_json({"error": "invalid session id"}, 400)
+                session_id = path.split("/")[-1]
+                if not session_id:
+                    self.send_json({"error": "missing session id"}, 400)
                     return
-                session = memory_db.get_session(point_id)
+                session = memory_db.get_session_by_id(session_id)
                 if not session:
                     self.send_json({"error": "session not found"}, 404)
                     return
-                session_id = session.get("session_id", "")
                 messages = memory_db.get_session_messages(session_id)
                 self.send_json({"session": session, "messages": messages})
 
@@ -925,8 +938,11 @@ loadStats().then(()=>loadSessions());
                 source = qs.get("source", [""])[0] or None
                 role = qs.get("role", [""])[0] or None
                 project = qs.get("project", [""])[0] or None
+                date_from = qs.get("date_from", [""])[0] or None
+                date_to = qs.get("date_to", [""])[0] or None
                 results = memory_db.search(
-                    q, limit=limit, source=source, role=role, project=project
+                    q, limit=limit, source=source, role=role,
+                    project=project, date_from=date_from, date_to=date_to,
                 )
                 self.send_json(results)
 
