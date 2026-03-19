@@ -945,6 +945,17 @@ function loadDetailFromSearch(sessionId){
 }
 
 document.getElementById('q').addEventListener('keydown',e=>{if(e.key==='Enter')doSearch();});
+
+// Re-fetch when any filter changes
+function onFilterChange(){
+  if(currentTab==='sessions'&&!currentDetail) loadSessions();
+  else if(currentTab==='search'&&document.getElementById('q').value.trim()) doSearch();
+}
+['f-source','f-limit','f-role'].forEach(id=>document.getElementById(id).addEventListener('change',onFilterChange));
+['f-date-from','f-date-to'].forEach(id=>document.getElementById(id).addEventListener('change',onFilterChange));
+let projectDebounce;
+document.getElementById('f-project').addEventListener('input',()=>{clearTimeout(projectDebounce);projectDebounce=setTimeout(onFilterChange,400);});
+
 loadStats().then(()=>loadSessions());
 </script>
 </body>
