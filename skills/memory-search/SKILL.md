@@ -95,3 +95,17 @@ memory-bank ingest all
 ```bash
 memory-bank stats
 ```
+
+## Web UI
+
+```bash
+memory-bank ui           # opens http://localhost:6333
+memory-bank ui --port 8080
+```
+
+## Auto-ingest hooks
+
+```bash
+memory-bank hooks install    # run ingest automatically after each session
+memory-bank hooks status
+```
