@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import rich_click as click
@@ -43,6 +44,12 @@ click.rich_click.COMMAND_GROUPS = {
         {
             "name": "Sources",
             "commands": ["claude-code", "claude-desktop", "all", "custom"],
+        }
+    ],
+    "memory-bank ui": [
+        {
+            "name": "Background",
+            "commands": ["start", "stop", "status"],
         }
     ],
 }
@@ -494,7 +501,11 @@ def delete(source, db):
 # ---------------------------------------------------------------------------
 
 
-@cli.command(context_settings=CONTEXT_SETTINGS)
+_UI_PID_FILE = Path.home() / ".memory-bank" / "ui.pid"
+_UI_LOG_FILE = Path.home() / ".memory-bank" / "ui.log"
+
+
+@cli.group(context_settings=CONTEXT_SETTINGS, invoke_without_command=True)
 @click.option(
     "--port", "-p",
     default=6333,
@@ -515,18 +526,30 @@ def delete(source, db):
     metavar="DIR",
     help="Override the Qdrant DB storage path. Env: [dim]MEMORY_BANK_DB[/dim].",
 )
-def ui(port, no_browser, db):
+@click.pass_context
+def ui(ctx, port, no_browser, db):
     """Launch a web UI to browse and search your memory bank.
 
-    Starts a local HTTP server and opens your browser to the UI.
-    Press [bold]Ctrl+C[/bold] to stop.
+    Run with no subcommand for a foreground server, or use
+    [cyan]start[/cyan] / [cyan]stop[/cyan] / [cyan]status[/cyan]
+    to manage a background server.
 
     \b
     Examples:
-      memory-bank ui
-      memory-bank ui --port 8080
-      memory-bank ui --no-browser
+      memory-bank ui                    # foreground
+      memory-bank ui start              # background daemon
+      memory-bank ui stop               # stop background server
+      memory-bank ui status             # check if running
+      memory-bank ui --port 8080        # foreground on custom port
+      memory-bank ui start -p 8080      # background on custom port
     """
+    ctx.ensure_object(dict)
+    ctx.obj["port"] = port
+    ctx.obj["no_browser"] = no_browser
+    ctx.obj["db"] = db
+
+    if ctx.invoked_subcommand is not None:
+        return
     import json
     import threading
     import time
@@ -1022,6 +1045,142 @@ loadStats().then(()=>loadSessions());
     except KeyboardInterrupt:
         console.print("\n[dim]Stopped.[/dim]")
         server.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# ui background subcommands
+# ---------------------------------------------------------------------------
+
+
+def _read_ui_pid() -> tuple[int, int] | None:
+    """Read (pid, port) from the PID file, or None if not present."""
+    if not _UI_PID_FILE.exists():
+        return None
+    try:
+        import json
+        data = json.loads(_UI_PID_FILE.read_text())
+        return (data["pid"], data["port"])
+    except (json.JSONDecodeError, KeyError, OSError):
+        return None
+
+
+def _is_pid_alive(pid: int) -> bool:
+    """Check whether a process with the given PID is still running."""
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+@ui.command("start", context_settings=CONTEXT_SETTINGS)
+@click.pass_context
+def ui_start(ctx):
+    """Start the UI server in the background.
+
+    Spawns a detached process and writes its PID to
+    [dim]~/.memory-bank/ui.pid[/dim]. Logs go to [dim]~/.memory-bank/ui.log[/dim].
+
+    \b
+    Examples:
+      memory-bank ui start
+      memory-bank ui start -p 8080
+    """
+    import json
+    import shutil
+    import subprocess
+
+    port = ctx.obj["port"]
+    db = ctx.obj["db"]
+
+    # Check if already running
+    existing = _read_ui_pid()
+    if existing:
+        pid, old_port = existing
+        if _is_pid_alive(pid):
+            console.print(
+                f"[yellow]UI is already running[/yellow] (PID {pid}, port {old_port}).\n"
+                f"[dim]Run [cyan]memory-bank ui stop[/cyan] first.[/dim]"
+            )
+            return
+
+    # Find the memory-bank executable
+    mb_bin = shutil.which("memory-bank")
+    if not mb_bin:
+        console.print("[bold red]Error:[/bold red] memory-bank not found on PATH.")
+        return
+
+    cmd = [mb_bin, "ui", "--no-browser", "-p", str(port)]
+    if db:
+        cmd.extend(["--db", db])
+
+    _UI_PID_FILE.parent.mkdir(parents=True, exist_ok=True)
+    log_fh = open(_UI_LOG_FILE, "a")
+
+    proc = subprocess.Popen(
+        cmd,
+        stdout=log_fh,
+        stderr=log_fh,
+        start_new_session=True,
+    )
+
+    _UI_PID_FILE.write_text(json.dumps({"pid": proc.pid, "port": port}) + "\n")
+
+    url = f"http://localhost:{port}"
+    console.print(
+        f"[bold green]Started[/bold green] UI server in background "
+        f"(PID [cyan]{proc.pid}[/cyan], [cyan]{url}[/cyan])"
+    )
+    console.print(f"[dim]Log: {_UI_LOG_FILE}[/dim]")
+    console.print(f"[dim]Stop with: [cyan]memory-bank ui stop[/cyan][/dim]")
+
+    if not ctx.obj["no_browser"]:
+        import webbrowser
+        webbrowser.open(url)
+
+
+@ui.command("stop", context_settings=CONTEXT_SETTINGS)
+def ui_stop():
+    """Stop a background UI server."""
+    import signal
+
+    existing = _read_ui_pid()
+    if not existing:
+        console.print("[yellow]No background UI server found.[/yellow]")
+        return
+
+    pid, port = existing
+    if not _is_pid_alive(pid):
+        console.print(f"[yellow]PID {pid} is not running (stale pid file).[/yellow]")
+        _UI_PID_FILE.unlink(missing_ok=True)
+        return
+
+    os.kill(pid, signal.SIGTERM)
+    _UI_PID_FILE.unlink(missing_ok=True)
+    console.print(
+        f"[bold green]Stopped[/bold green] UI server (PID {pid}, port {port})."
+    )
+
+
+@ui.command("status", context_settings=CONTEXT_SETTINGS)
+def ui_status():
+    """Check whether a background UI server is running."""
+    existing = _read_ui_pid()
+    if not existing:
+        console.print("[dim]No background UI server configured.[/dim]")
+        return
+
+    pid, port = existing
+    if _is_pid_alive(pid):
+        console.print(
+            f"[bold green]Running[/bold green]  PID [cyan]{pid}[/cyan]  "
+            f"Port [cyan]{port}[/cyan]  [dim]http://localhost:{port}[/dim]"
+        )
+    else:
+        console.print(f"[yellow]Not running[/yellow] (stale pid file, PID {pid}).")
+        _UI_PID_FILE.unlink(missing_ok=True)
 
 
 # ---------------------------------------------------------------------------
