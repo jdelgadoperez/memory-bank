@@ -90,6 +90,8 @@ class ClaudeDesktopIngestor(BaseIngestor):
         conversations = data if isinstance(data, list) else data.get("conversations", [])
 
         for conv in conversations:
+            if not isinstance(conv, dict):
+                continue
             conv_id = str(conv.get("id", ""))
             title = conv.get("title", "")
             messages = conv.get("messages", [])
