@@ -60,14 +60,42 @@ class ClaudeCodeIngestor(BaseIngestor):
 
     def iter_messages(self) -> Iterator[ChatMessage]:
         for jsonl_path in sorted(self.claude_dir.rglob("*.jsonl")):
-            # Skip subagent files — they duplicate content already in the main session
-            if "subagents" in jsonl_path.parts:
-                continue
-            yield from self._parse_file(jsonl_path)
+            is_subagent = "subagents" in jsonl_path.parts
+            agent_type = ""
+            parent_session_id = ""
 
-    def _parse_file(self, path: Path) -> Iterator[ChatMessage]:
-        # Derive project name from the directory name (encoded as -home-user-myproject)
-        project = _decode_project_path(path.parts[-2]) if len(path.parts) >= 2 else ""
+            if is_subagent:
+                # Load agent type from companion .meta.json
+                meta_path = jsonl_path.with_suffix(".meta.json")
+                if meta_path.exists():
+                    try:
+                        agent_meta = json.loads(meta_path.read_text())
+                        agent_type = agent_meta.get("agentType", "")
+                    except (json.JSONDecodeError, OSError):
+                        pass
+                # Parent session is the directory name containing subagents/
+                parent_session_id = jsonl_path.parts[-3] if len(jsonl_path.parts) >= 3 else ""
+
+            yield from self._parse_file(
+                jsonl_path,
+                is_subagent=is_subagent,
+                agent_type=agent_type,
+                parent_session_id=parent_session_id,
+            )
+
+    def _parse_file(
+        self,
+        path: Path,
+        is_subagent: bool = False,
+        agent_type: str = "",
+        parent_session_id: str = "",
+    ) -> Iterator[ChatMessage]:
+        # Derive project name from the encoded directory path
+        if is_subagent:
+            # subagents live at <project>/<session>/subagents/<agent>.jsonl
+            project = _decode_project_path(path.parts[-4]) if len(path.parts) >= 4 else ""
+        else:
+            project = _decode_project_path(path.parts[-2]) if len(path.parts) >= 2 else ""
         session_id = path.stem  # filename without .jsonl
 
         try:
@@ -100,7 +128,11 @@ class ClaudeCodeIngestor(BaseIngestor):
                         "is_sidechain": obj.get("isSidechain", False),
                         "user_type": obj.get("userType", ""),
                         "slug": obj.get("slug", ""),
+                        "is_subagent": is_subagent,
                     }
+                    if is_subagent:
+                        meta["agent_type"] = agent_type
+                        meta["parent_session_id"] = parent_session_id
                     if msg_type == "assistant":
                         msg_obj = obj.get("message", {})
                         meta["model"] = msg_obj.get("model", "")
