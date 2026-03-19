@@ -5,8 +5,10 @@ import hashlib
 import math
 import os
 import struct
+import warnings
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Generator
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
@@ -30,6 +32,10 @@ DEFAULT_DB_PATH = Path.home() / ".memory-bank" / "qdrant"
 
 # Keep old name as alias for backward compat in CLI references
 COLLECTION = MESSAGES_COLLECTION
+
+
+class DatabaseLockedError(RuntimeError):
+    """Raised when the Qdrant DB is locked by another process."""
 
 
 def get_db_path() -> Path:
@@ -73,50 +79,73 @@ def _hash_embed(text: str, dim: int = VECTOR_SIZE) -> list[float]:
 
 
 class MemoryDB:
-    """Thin wrapper around embedded Qdrant collections."""
+    """Thin wrapper around embedded Qdrant collections.
+
+    The Qdrant client is acquired per-operation and released after,
+    so the exclusive file lock is only held during active I/O.
+    The fastembed model stays loaded in memory across operations.
+    """
 
     def __init__(self, path: Path | None = None):
         self.path = path or get_db_path()
         self.path.mkdir(parents=True, exist_ok=True)
-        self._client = QdrantClient(path=str(self.path))
         self._embedder = None   # loaded on first call to _embed()
         self._embedder_loaded = False
-        self._ensure_collections()
+        self._collections_verified = False
 
-    def _ensure_collections(self) -> None:
-        existing = {c.name for c in self._client.get_collections().collections}
+    @contextmanager
+    def _connect(self) -> Generator[QdrantClient, None, None]:
+        """Acquire the Qdrant client for the duration of an operation."""
+        try:
+            client = QdrantClient(path=str(self.path))
+        except RuntimeError as exc:
+            if "already accessed" in str(exc):
+                raise DatabaseLockedError(
+                    "Database is locked by another process. "
+                    "If the UI server is running, stop it with Ctrl+C, "
+                    "or use the UI's built-in search."
+                ) from exc
+            raise
+        try:
+            if not self._collections_verified:
+                self._ensure_collections(client)
+                self._collections_verified = True
+            yield client
+        finally:
+            client.close()
+
+    def _ensure_collections(self, client: QdrantClient) -> None:
+        existing = {c.name for c in client.get_collections().collections}
         vector_config = VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE)
 
         if MESSAGES_COLLECTION not in existing:
-            self._client.create_collection(
+            client.create_collection(
                 collection_name=MESSAGES_COLLECTION,
                 vectors_config=vector_config,
             )
 
         if SESSIONS_COLLECTION not in existing:
-            self._client.create_collection(
+            client.create_collection(
                 collection_name=SESSIONS_COLLECTION,
                 vectors_config=vector_config,
             )
 
-        self._ensure_indexes()
+        self._ensure_indexes(client)
 
-    def _ensure_indexes(self) -> None:
+    def _ensure_indexes(self, client: QdrantClient) -> None:
         """Create payload indexes for filter performance (idempotent).
 
         Note: payload indexes have no effect in embedded Qdrant (local mode).
         They are created here so the code works correctly if switched to
         server mode later.
         """
-        import warnings
-
         with warnings.catch_warnings():
             warnings.filterwarnings(
                 "ignore", message="Payload indexes have no effect"
             )
             for field_name in ["session_id", "source", "project", "role"]:
                 try:
-                    self._client.create_payload_index(
+                    client.create_payload_index(
                         collection_name=MESSAGES_COLLECTION,
                         field_name=field_name,
                         field_schema=PayloadSchemaType.KEYWORD,
@@ -126,7 +155,7 @@ class MemoryDB:
 
             for field_name in ["source", "project"]:
                 try:
-                    self._client.create_payload_index(
+                    client.create_payload_index(
                         collection_name=SESSIONS_COLLECTION,
                         field_name=field_name,
                         field_schema=PayloadSchemaType.KEYWORD,
@@ -143,26 +172,30 @@ class MemoryDB:
         if not messages:
             return 0, 0
 
-        existing_ids = self._existing_ids(
-            MESSAGES_COLLECTION, {m.id for m in messages}
-        )
-        new_msgs = [m for m in messages if m.id not in existing_ids]
-
-        if not new_msgs:
-            return 0, len(messages)
-
-        texts = [m.content for m in new_msgs]
-        vectors = self._embed(texts)
-
-        points = [
-            PointStruct(
-                id=_id_to_uint(m.id),
-                vector=vec,
-                payload=m.to_payload(),
+        with self._connect() as client:
+            existing_ids = self._existing_ids(
+                client, MESSAGES_COLLECTION, {m.id for m in messages}
             )
-            for m, vec in zip(new_msgs, vectors)
-        ]
-        self._client.upsert(collection_name=MESSAGES_COLLECTION, points=points)
+            new_msgs = [m for m in messages if m.id not in existing_ids]
+
+            if not new_msgs:
+                return 0, len(messages)
+
+            # Embed outside the connect block would be ideal, but we need
+            # existing_ids check first. Embedding is the slow part but
+            # doesn't touch Qdrant — it runs on the in-memory model.
+            texts = [m.content for m in new_msgs]
+            vectors = self._embed(texts)
+
+            points = [
+                PointStruct(
+                    id=_id_to_uint(m.id),
+                    vector=vec,
+                    payload=m.to_payload(),
+                )
+                for m, vec in zip(new_msgs, vectors)
+            ]
+            client.upsert(collection_name=MESSAGES_COLLECTION, points=points)
         return len(new_msgs), len(messages) - len(new_msgs)
 
     # ------------------------------------------------------------------
@@ -170,11 +203,43 @@ class MemoryDB:
     # ------------------------------------------------------------------
 
     def upsert_sessions(self, sessions: list[Session]) -> int:
-        """Upsert session records (always overwrites). Returns count upserted."""
+        """Upsert session records, skipping unchanged ones. Returns count upserted."""
         if not sessions:
             return 0
 
-        texts = [s.summary for s in sessions]
+        with self._connect() as client:
+            # Check which sessions already exist and compare message counts
+            existing_ids = self._existing_ids(
+                client, SESSIONS_COLLECTION, {s.id for s in sessions}
+            )
+
+            # For sessions that exist, fetch their current message_count to detect changes
+            changed_sessions: list[Session] = []
+            if existing_ids:
+                existing_payloads: dict[str, dict] = {}
+                uint_ids = [_id_to_uint(sid) for sid in existing_ids]
+                results = client.retrieve(
+                    collection_name=SESSIONS_COLLECTION,
+                    ids=uint_ids,
+                    with_payload=["id", "message_count"],
+                )
+                for r in results:
+                    existing_payloads[r.payload["id"]] = r.payload
+
+                for s in sessions:
+                    if s.id not in existing_ids:
+                        changed_sessions.append(s)
+                    else:
+                        old = existing_payloads.get(s.id, {})
+                        if old.get("message_count") != s.message_count:
+                            changed_sessions.append(s)
+            else:
+                changed_sessions = list(sessions)
+
+        if not changed_sessions:
+            return 0
+
+        texts = [s.summary for s in changed_sessions]
         vectors = self._embed(texts)
 
         points = [
@@ -183,10 +248,11 @@ class MemoryDB:
                 vector=vec,
                 payload=s.to_payload(),
             )
-            for s, vec in zip(sessions, vectors)
+            for s, vec in zip(changed_sessions, vectors)
         ]
-        self._client.upsert(collection_name=SESSIONS_COLLECTION, points=points)
-        return len(sessions)
+        with self._connect() as client:
+            client.upsert(collection_name=SESSIONS_COLLECTION, points=points)
+        return len(changed_sessions)
 
     # ------------------------------------------------------------------
     # Search — messages
@@ -211,13 +277,14 @@ class MemoryDB:
 
         # Fetch extra results if date filtering will reduce the set
         fetch_limit = limit * 3 if (date_from or date_to) else limit
-        response = self._client.query_points(
-            collection_name=MESSAGES_COLLECTION,
-            query=query_vec,
-            query_filter=flt,
-            limit=fetch_limit,
-            with_payload=True,
-        )
+        with self._connect() as client:
+            response = client.query_points(
+                collection_name=MESSAGES_COLLECTION,
+                query=query_vec,
+                query_filter=flt,
+                limit=fetch_limit,
+                with_payload=True,
+            )
         results = [
             {"score": r.score, **r.payload}
             for r in response.points
@@ -246,13 +313,14 @@ class MemoryDB:
         query_vec = self._embed([query])[0]
         flt = self._build_filter(source=source, project=project)
 
-        response = self._client.query_points(
-            collection_name=SESSIONS_COLLECTION,
-            query=query_vec,
-            query_filter=flt,
-            limit=limit,
-            with_payload=True,
-        )
+        with self._connect() as client:
+            response = client.query_points(
+                collection_name=SESSIONS_COLLECTION,
+                query=query_vec,
+                query_filter=flt,
+                limit=limit,
+                with_payload=True,
+            )
         return [
             {"score": r.score, **r.payload}
             for r in response.points
@@ -274,19 +342,20 @@ class MemoryDB:
         flt = self._build_filter(source=source, project=project)
 
         all_sessions: list[dict[str, Any]] = []
-        offset = None
-        while True:
-            records, offset = self._client.scroll(
-                collection_name=SESSIONS_COLLECTION,
-                limit=1000,
-                offset=offset,
-                scroll_filter=flt,
-                with_payload=True,
-            )
-            for r in records:
-                all_sessions.append(r.payload)
-            if offset is None:
-                break
+        with self._connect() as client:
+            offset = None
+            while True:
+                records, offset = client.scroll(
+                    collection_name=SESSIONS_COLLECTION,
+                    limit=1000,
+                    offset=offset,
+                    scroll_filter=flt,
+                    with_payload=True,
+                )
+                for r in records:
+                    all_sessions.append(r.payload)
+                if offset is None:
+                    break
 
         if date_from:
             all_sessions = [
@@ -308,12 +377,13 @@ class MemoryDB:
     def get_session_by_id(self, session_id: str) -> dict[str, Any] | None:
         """Get a single session by its session_id (UUID)."""
         flt = self._build_filter(session_id=session_id)
-        records, _ = self._client.scroll(
-            collection_name=SESSIONS_COLLECTION,
-            limit=1,
-            scroll_filter=flt,
-            with_payload=True,
-        )
+        with self._connect() as client:
+            records, _ = client.scroll(
+                collection_name=SESSIONS_COLLECTION,
+                limit=1,
+                scroll_filter=flt,
+                with_payload=True,
+            )
         if not records:
             return None
         return records[0].payload
@@ -327,19 +397,20 @@ class MemoryDB:
         flt = self._build_filter(session_id=session_id)
 
         messages: list[dict[str, Any]] = []
-        offset = None
-        while True:
-            records, offset = self._client.scroll(
-                collection_name=MESSAGES_COLLECTION,
-                limit=min(limit, 1000),
-                offset=offset,
-                scroll_filter=flt,
-                with_payload=True,
-            )
-            for r in records:
-                messages.append(r.payload)
-            if offset is None or len(messages) >= limit:
-                break
+        with self._connect() as client:
+            offset = None
+            while True:
+                records, offset = client.scroll(
+                    collection_name=MESSAGES_COLLECTION,
+                    limit=min(limit, 1000),
+                    offset=offset,
+                    scroll_filter=flt,
+                    with_payload=True,
+                )
+                for r in records:
+                    messages.append(r.payload)
+                if offset is None or len(messages) >= limit:
+                    break
 
         messages.sort(key=lambda m: m.get("timestamp", ""))
         return messages[:limit]
@@ -349,24 +420,25 @@ class MemoryDB:
     # ------------------------------------------------------------------
 
     def stats(self) -> dict[str, Any]:
-        message_count = self._client.count(MESSAGES_COLLECTION).count
-        session_count = self._client.count(SESSIONS_COLLECTION).count
+        with self._connect() as client:
+            message_count = client.count(MESSAGES_COLLECTION).count
+            session_count = client.count(SESSIONS_COLLECTION).count
 
-        # Count by source via scroll
-        source_counts: dict[str, int] = {}
-        offset = None
-        while True:
-            records, offset = self._client.scroll(
-                collection_name=MESSAGES_COLLECTION,
-                limit=1000,
-                offset=offset,
-                with_payload=["source"],
-            )
-            for r in records:
-                src = r.payload.get("source", "unknown")
-                source_counts[src] = source_counts.get(src, 0) + 1
-            if offset is None:
-                break
+            # Count by source via scroll
+            source_counts: dict[str, int] = {}
+            offset = None
+            while True:
+                records, offset = client.scroll(
+                    collection_name=MESSAGES_COLLECTION,
+                    limit=1000,
+                    offset=offset,
+                    with_payload=["source"],
+                )
+                for r in records:
+                    src = r.payload.get("source", "unknown")
+                    source_counts[src] = source_counts.get(src, 0) + 1
+                if offset is None:
+                    break
 
         embedding_status = (
             "neural (BAAI/bge-small-en-v1.5)"
@@ -384,19 +456,20 @@ class MemoryDB:
 
     def delete_by_source(self, source: str) -> int:
         """Delete all messages and sessions from a given source. Returns message count deleted."""
-        before = self._client.count(MESSAGES_COLLECTION).count
         source_filter = Filter(
             must=[FieldCondition(key="source", match=MatchValue(value=source))]
         )
-        self._client.delete(
-            collection_name=MESSAGES_COLLECTION,
-            points_selector=source_filter,
-        )
-        self._client.delete(
-            collection_name=SESSIONS_COLLECTION,
-            points_selector=source_filter,
-        )
-        after = self._client.count(MESSAGES_COLLECTION).count
+        with self._connect() as client:
+            before = client.count(MESSAGES_COLLECTION).count
+            client.delete(
+                collection_name=MESSAGES_COLLECTION,
+                points_selector=source_filter,
+            )
+            client.delete(
+                collection_name=SESSIONS_COLLECTION,
+                points_selector=source_filter,
+            )
+            after = client.count(MESSAGES_COLLECTION).count
         return before - after
 
     # ------------------------------------------------------------------
@@ -419,16 +492,18 @@ class MemoryDB:
             return [vec.tolist() for vec in self._embedder.embed(texts)]
         return [_hash_embed(t) for t in texts]
 
-    def _existing_ids(self, collection: str, ids: set[str]) -> set[str]:
+    @staticmethod
+    def _existing_ids(client: QdrantClient, collection: str, ids: set[str]) -> set[str]:
         uint_ids = [_id_to_uint(i) for i in ids]
-        results = self._client.retrieve(
+        results = client.retrieve(
             collection_name=collection,
             ids=uint_ids,
             with_payload=["id"],
         )
         return {r.payload["id"] for r in results}
 
-    def _build_filter(self, **kwargs: str | None) -> Filter | None:
+    @staticmethod
+    def _build_filter(**kwargs: str | None) -> Filter | None:
         conditions = [
             FieldCondition(key=k, match=MatchValue(value=v))
             for k, v in kwargs.items()

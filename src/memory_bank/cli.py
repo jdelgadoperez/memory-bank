@@ -326,17 +326,21 @@ def search(query, limit, source, project, role, session, db, as_json):
       memory-bank search "auth bug" -s claude-code -r assistant -n 5
       memory-bank search "deployment" -p my-project --json | jq '.[0].content'
     """
-    from .db import MemoryDB
+    from .db import DatabaseLockedError, MemoryDB
 
     db_obj = MemoryDB(Path(db) if db else None)
-    results = db_obj.search(
-        query=query,
-        limit=limit,
-        source=source,
-        project=project,
-        role=role,
-        session_id=session,
-    )
+    try:
+        results = db_obj.search(
+            query=query,
+            limit=limit,
+            source=source,
+            project=project,
+            role=role,
+            session_id=session,
+        )
+    except DatabaseLockedError:
+        _print_lock_error()
+        return
 
     if not results:
         console.print(
@@ -409,10 +413,14 @@ def stats(db):
     """
     from rich.table import Table
 
-    from .db import MemoryDB
+    from .db import DatabaseLockedError, MemoryDB
 
     db_obj = MemoryDB(Path(db) if db else None)
-    s = db_obj.stats()
+    try:
+        s = db_obj.stats()
+    except DatabaseLockedError:
+        _print_lock_error()
+        return
 
     info = Table.grid(padding=(0, 2))
     info.add_column(style="dim")
@@ -467,10 +475,14 @@ def delete(source, db):
     Example:
       memory-bank delete claude-desktop
     """
-    from .db import MemoryDB
+    from .db import DatabaseLockedError, MemoryDB
 
     db_obj = MemoryDB(Path(db) if db else None)
-    n = db_obj.delete_by_source(source)
+    try:
+        n = db_obj.delete_by_source(source)
+    except DatabaseLockedError:
+        _print_lock_error()
+        return
     console.print(
         f"[bold green]Deleted[/bold green] [cyan]{n}[/cyan] messages "
         f"from source '[bold]{source}[/bold]'."
@@ -1171,8 +1183,19 @@ def status(settings_path):
 # ---------------------------------------------------------------------------
 
 
+PENDING_DIR = Path.home() / ".memory-bank" / "pending"
+
+
+def _print_lock_error() -> None:
+    console.print(
+        "[bold red]Error:[/bold red] Database is locked by another process.\n"
+        "[dim]If the UI server is running, stop it with Ctrl+C, "
+        "or use the UI's built-in search.[/dim]"
+    )
+
+
 def _run_ingest(ingestor, db_path: Path | None = None):
-    from .db import MemoryDB
+    from .db import DatabaseLockedError, MemoryDB
     from .schema import IngestResult, Session
 
     source = ingestor.source_name
@@ -1189,81 +1212,99 @@ def _run_ingest(ingestor, db_path: Path | None = None):
     # Accumulate session metadata while iterating messages
     session_acc: dict[str, dict] = {}
 
-    with console.status(f"[bold magenta]Ingesting [cyan]{source}[/cyan]…[/bold magenta]"):
-        batch: list = []
-        for msg in ingestor.iter_messages():
-            result.total_found += 1
-            batch.append(msg)
+    try:
+        with console.status(f"[bold magenta]Ingesting [cyan]{source}[/cyan]…[/bold magenta]"):
+            batch: list = []
+            for msg in ingestor.iter_messages():
+                result.total_found += 1
+                batch.append(msg)
 
-            # Accumulate session info
-            sid = msg.session_id
-            if sid not in session_acc:
-                session_acc[sid] = {
-                    "source": msg.source,
-                    "project": msg.project,
-                    "first_timestamp": msg.timestamp,
-                    "last_timestamp": msg.timestamp,
-                    "message_count": 0,
-                    "first_user_message": "",
-                    "slug": "",
-                    "model": "",
-                    "git_branch": "",
-                    "cwd": "",
-                    "project_path": "",
-                }
-            acc = session_acc[sid]
-            acc["message_count"] += 1
-            if msg.timestamp < acc["first_timestamp"]:
-                acc["first_timestamp"] = msg.timestamp
-            if msg.timestamp > acc["last_timestamp"]:
-                acc["last_timestamp"] = msg.timestamp
-            if msg.role == "user" and not acc["first_user_message"]:
-                acc["first_user_message"] = msg.content[:500]
-            if msg.metadata.get("slug") and not acc["slug"]:
-                acc["slug"] = msg.metadata["slug"]
-            if msg.metadata.get("model") and not acc["model"]:
-                acc["model"] = msg.metadata["model"]
-            if msg.metadata.get("git_branch") and not acc["git_branch"]:
-                acc["git_branch"] = msg.metadata["git_branch"]
-            if msg.metadata.get("cwd") and not acc["cwd"]:
-                acc["cwd"] = msg.metadata["cwd"]
+                # Accumulate session info
+                sid = msg.session_id
+                if sid not in session_acc:
+                    session_acc[sid] = {
+                        "source": msg.source,
+                        "project": msg.project,
+                        "first_timestamp": msg.timestamp,
+                        "last_timestamp": msg.timestamp,
+                        "message_count": 0,
+                        "first_user_message": "",
+                        "slug": "",
+                        "model": "",
+                        "git_branch": "",
+                        "cwd": "",
+                        "project_path": "",
+                    }
+                acc = session_acc[sid]
+                acc["message_count"] += 1
+                if msg.timestamp < acc["first_timestamp"]:
+                    acc["first_timestamp"] = msg.timestamp
+                if msg.timestamp > acc["last_timestamp"]:
+                    acc["last_timestamp"] = msg.timestamp
+                if msg.role == "user" and not acc["first_user_message"]:
+                    acc["first_user_message"] = msg.content[:500]
+                if msg.metadata.get("slug") and not acc["slug"]:
+                    acc["slug"] = msg.metadata["slug"]
+                if msg.metadata.get("model") and not acc["model"]:
+                    acc["model"] = msg.metadata["model"]
+                if msg.metadata.get("git_branch") and not acc["git_branch"]:
+                    acc["git_branch"] = msg.metadata["git_branch"]
+                if msg.metadata.get("cwd") and not acc["cwd"]:
+                    acc["cwd"] = msg.metadata["cwd"]
 
-            if len(batch) >= BATCH_SIZE:
+                if len(batch) >= BATCH_SIZE:
+                    ins, skp = db.upsert(batch)
+                    result.inserted += ins
+                    result.skipped += skp
+                    batch = []
+
+            if batch:
                 ins, skp = db.upsert(batch)
                 result.inserted += ins
                 result.skipped += skp
-                batch = []
 
-        if batch:
-            ins, skp = db.upsert(batch)
-            result.inserted += ins
-            result.skipped += skp
+            # Build and upsert session records
+            sessions = []
+            for sid, acc in session_acc.items():
+                title = acc["slug"] or acc["first_user_message"][:120] or sid
+                summary = acc["first_user_message"] or title
+                session = Session(
+                    id=Session.make_id(acc["source"], sid),
+                    source=acc["source"],
+                    session_id=sid,
+                    project=acc["project"],
+                    title=title,
+                    summary=summary,
+                    message_count=acc["message_count"],
+                    first_timestamp=acc["first_timestamp"],
+                    last_timestamp=acc["last_timestamp"],
+                    model=acc["model"],
+                    metadata={
+                        "git_branch": acc["git_branch"],
+                        "cwd": acc["cwd"],
+                    },
+                )
+                sessions.append(session)
 
-        # Build and upsert session records
-        sessions = []
-        for sid, acc in session_acc.items():
-            title = acc["slug"] or acc["first_user_message"][:120] or sid
-            summary = acc["first_user_message"] or title
-            session = Session(
-                id=Session.make_id(acc["source"], sid),
-                source=acc["source"],
-                session_id=sid,
-                project=acc["project"],
-                title=title,
-                summary=summary,
-                message_count=acc["message_count"],
-                first_timestamp=acc["first_timestamp"],
-                last_timestamp=acc["last_timestamp"],
-                model=acc["model"],
-                metadata={
-                    "git_branch": acc["git_branch"],
-                    "cwd": acc["cwd"],
-                },
-            )
-            sessions.append(session)
+            if sessions:
+                result.sessions_upserted = db.upsert_sessions(sessions)
 
-        if sessions:
-            result.sessions_upserted = db.upsert_sessions(sessions)
+    except DatabaseLockedError:
+        PENDING_DIR.mkdir(parents=True, exist_ok=True)
+        (PENDING_DIR / source).touch()
+        console.print(
+            f"[yellow]DB is locked.[/yellow] Ingest for [cyan]{source}[/cyan] "
+            f"queued — will run on next invocation."
+        )
+        return result
+    except Exception as exc:
+        import traceback
+
+        console.print(
+            f"[bold red]Error during ingest of [cyan]{source}[/cyan]:[/bold red] {exc}"
+        )
+        console.print(f"[dim]{traceback.format_exc()}[/dim]")
+        return result
 
     console.print(
         f"[bold green]\u2713[/bold green] [cyan]{source}[/cyan]: "
@@ -1272,4 +1313,39 @@ def _run_ingest(ingestor, db_path: Path | None = None):
         f"[dim]{result.skipped} already existed[/dim], "
         f"[cyan]{result.sessions_upserted}[/cyan] sessions"
     )
+
+    # Drain any pending ingests from prior lock failures
+    _drain_pending(db)
+
     return result
+
+
+def _drain_pending(db) -> None:
+    """Check for pending ingest markers and run them."""
+    if not PENDING_DIR.exists():
+        return
+    markers = list(PENDING_DIR.iterdir())
+    if not markers:
+        return
+
+    for marker in markers:
+        pending_source = marker.name
+        console.print(
+            f"[dim]Draining pending ingest for [cyan]{pending_source}[/cyan]…[/dim]"
+        )
+        marker.unlink()
+
+        # Re-run ingest for the pending source
+        if pending_source == "claude-code":
+            from .ingestors.claude_code import ClaudeCodeIngestor
+            ingestor = ClaudeCodeIngestor()
+        elif pending_source == "claude-desktop":
+            from .ingestors.claude_desktop import ClaudeDesktopIngestor
+            ingestor = ClaudeDesktopIngestor()
+        else:
+            console.print(
+                f"[dim]Unknown pending source [cyan]{pending_source}[/cyan], skipping[/dim]"
+            )
+            continue
+
+        _run_ingest(ingestor, db_path=db.path)
