@@ -579,7 +579,9 @@ def ui(port, no_browser, db):
   .err{color:#f87171;font-size:.82rem;padding:.5rem var(--gap)}
   /* Session list table */
   .session-table{width:100%;border-collapse:collapse}
-  .session-table th{text-align:left;font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);padding:.5rem .75rem;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg);z-index:1}
+  .session-table th{text-align:left;font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);padding:.5rem .75rem;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg);z-index:1;cursor:pointer;user-select:none}
+  .session-table th:hover{color:var(--text)}
+  .session-table th .sort-arrow{margin-left:.3em;font-size:.6rem;color:var(--accent)}
   .session-table td{padding:.6rem .75rem;border-bottom:1px solid var(--border);font-size:.82rem;vertical-align:top}
   .session-table tr{cursor:pointer}
   .session-table tbody tr:hover{background:var(--surface)}
@@ -684,6 +686,9 @@ def ui(port, no_browser, db):
 <script>
 let currentTab='sessions';
 let currentDetail=null;
+let sessionData=[];
+let sortCol='date';
+let sortAsc=false;
 
 function escHtml(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 function fmtDate(iso){if(!iso)return '';try{return new Date(iso).toLocaleDateString()}catch(e){return iso;}}
@@ -716,6 +721,20 @@ function switchTab(tab){
 }
 
 // --- Sessions list ---
+const SORT_KEYS={
+  project:s=>(s.project||'').toLowerCase(),
+  title:s=>(s.title||'').toLowerCase(),
+  date:s=>s.last_timestamp||'',
+  messages:s=>s.message_count||0,
+  model:s=>(s.model||'').toLowerCase(),
+};
+
+function toggleSort(col){
+  if(sortCol===col) sortAsc=!sortAsc;
+  else{ sortCol=col; sortAsc=col==='project'||col==='title'||col==='model'; }
+  renderSessions();
+}
+
 async function loadSessions(){
   const area=document.getElementById('view-area');
   area.innerHTML='';
@@ -729,34 +748,57 @@ async function loadSessions(){
     date_to:document.getElementById('f-date-to').value,
   });
   try{
-    const data=await fetch('/api/sessions?'+params).then(r=>r.json());
+    sessionData=await fetch('/api/sessions?'+params).then(r=>r.json());
     document.getElementById('loading').style.display='none';
-    if(!data.length){
+    if(!sessionData.length){
       document.getElementById('empty').style.display='block';
       document.getElementById('empty').innerHTML='No sessions found.<br><span style="font-size:.82rem">Run <code>memory-bank ingest claude-code</code> to get started.</span>';
       return;
     }
-    const table=document.createElement('table');table.className='session-table';
-    table.innerHTML='<thead><tr><th>Project</th><th>Title</th><th>Date</th><th>Messages</th><th>Model</th></tr></thead>';
-    const tbody=document.createElement('tbody');
-    data.forEach(s=>{
-      const tr=document.createElement('tr');
-      const dateRange=fmtDate(s.first_timestamp)+(s.first_timestamp!==s.last_timestamp?' - '+fmtDate(s.last_timestamp):'');
-      const model=(s.model||'').replace('claude-','').replace('-20250514','');
-      tr.innerHTML='<td class="muted-cell">'+escHtml(s.project||'')+'</td>'
-        +'<td class="title-cell">'+escHtml(s.title||'(untitled)')+'</td>'
-        +'<td class="muted-cell">'+dateRange+'</td>'
-        +'<td style="text-align:center">'+s.message_count+'</td>'
-        +'<td class="muted-cell">'+escHtml(model)+'</td>';
-      tr.onclick=()=>loadDetail(s.session_id,s);
-      tbody.appendChild(tr);
-    });
-    table.appendChild(tbody);
-    area.appendChild(table);
+    renderSessions();
   }catch(e){
     document.getElementById('loading').style.display='none';
     document.getElementById('err-msg').textContent='Error: '+e.message;
   }
+}
+
+function renderSessions(){
+  const area=document.getElementById('view-area');
+  area.innerHTML='';
+  const keyFn=SORT_KEYS[sortCol]||SORT_KEYS.date;
+  const sorted=[...sessionData].sort((a,b)=>{
+    const va=keyFn(a),vb=keyFn(b);
+    let cmp=va<vb?-1:va>vb?1:0;
+    return sortAsc?cmp:-cmp;
+  });
+  const cols=[
+    {key:'project',label:'Project'},
+    {key:'title',label:'Title'},
+    {key:'date',label:'Date'},
+    {key:'messages',label:'Messages'},
+    {key:'model',label:'Model'},
+  ];
+  const table=document.createElement('table');table.className='session-table';
+  const hrow=cols.map(c=>{
+    const arrow=sortCol===c.key?(sortAsc?'&#9650;':'&#9660;'):'';
+    return '<th onclick="toggleSort(\''+c.key+'\')">'+c.label+(arrow?'<span class="sort-arrow">'+arrow+'</span>':'')+'</th>';
+  }).join('');
+  table.innerHTML='<thead><tr>'+hrow+'</tr></thead>';
+  const tbody=document.createElement('tbody');
+  sorted.forEach(s=>{
+    const tr=document.createElement('tr');
+    const dateRange=fmtDate(s.first_timestamp)+(s.first_timestamp!==s.last_timestamp?' - '+fmtDate(s.last_timestamp):'');
+    const model=(s.model||'').replace('claude-','').replace('-20250514','');
+    tr.innerHTML='<td class="muted-cell">'+escHtml(s.project||'')+'</td>'
+      +'<td class="title-cell">'+escHtml(s.title||'(untitled)')+'</td>'
+      +'<td class="muted-cell">'+dateRange+'</td>'
+      +'<td style="text-align:center">'+s.message_count+'</td>'
+      +'<td class="muted-cell">'+escHtml(model)+'</td>';
+    tr.onclick=()=>loadDetail(s.session_id,s);
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  area.appendChild(table);
 }
 
 // --- Session detail ---
