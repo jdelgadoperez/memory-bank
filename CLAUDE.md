@@ -64,12 +64,7 @@ The Stop hook runs `memory-bank ingest claude-code` in the background and append
 output to `~/.memory-bank/ingest.log`.
 
 The SessionStart hook searches for past work related to the current git project
-and writes a brief summary to `~/.memory-bank/context.md`. Add this to your
-`CLAUDE.md` to give Claude automatic memory at session start:
-
-```markdown
-{{read_file ~/.memory-bank/context.md}}
-```
+and writes a brief summary to `~/.memory-bank/context.md`.
 
 ## MCP server
 
@@ -114,7 +109,12 @@ memory-bank session SESSION_ID [--json]
 
 memory-bank stats
 memory-bank delete [SOURCE] [--since EXPR] [--yes]
-memory-bank ui [--port PORT] [--no-browser]
+memory-bank ui [-p PORT] [-B|--no-browser] [--db PATH]
+memory-bank ui start               # background daemon
+memory-bank ui stop
+memory-bank ui restart
+memory-bank ui status
+memory-bank ui dev                 # auto-reload on source changes
 memory-bank mcp
 
 memory-bank hooks install [--on stop|start|both]
@@ -188,19 +188,28 @@ ln -s /home/user/memory-bank/skills/memory-search ~/.claude/skills/memory-search
 
 ```
 src/memory_bank/
-├── schema.py           — ChatMessage dataclass + IngestResult
-├── db.py               — Qdrant wrapper (upsert, search, stats, delete, sessions)
-├── cli.py              — Click CLI (memory-bank command)
-├── mcp_server.py       — FastMCP server (search_memory, get_session, list_sessions)
+├── schema.py              — ChatMessage dataclass + IngestResult
+├── db.py                  — Qdrant wrapper (upsert, search, stats, delete, sessions)
+├── cli.py                 — CLI entry point + shared config
+├── mcp_server.py          — FastMCP server (search_memory, get_session, list_sessions)
+├── commands/
+│   ├── ingest.py          — ingest subcommands (claude-code, claude-desktop, all, custom)
+│   ├── search.py          — search + sessions + session commands
+│   ├── manage.py          — stats + delete commands
+│   ├── hooks.py           — hooks install/uninstall/status
+│   └── mcp.py             — mcp command
+├── ui/
+│   ├── server.py          — HTML template + HTTP server + ui group command
+│   └── daemon.py          — background daemon (start/stop/restart/status/dev)
 └── ingestors/
-    ├── base.py         — BaseIngestor ABC
-    ├── claude_code.py  — ~/.claude/projects/**/*.jsonl
-    ├── claude_desktop.py — Claude Desktop JSON export
-    └── custom.py       — Generic mapper-based ingestor
+    ├── base.py            — BaseIngestor ABC
+    ├── claude_code.py     — ~/.claude/projects/**/*.jsonl
+    ├── claude_desktop.py  — Claude Desktop JSON export
+    └── custom.py          — Generic mapper-based ingestor
 
 scripts/
-└── search_agent.py     — Agentic search via Anthropic API
+└── search_agent.py        — Agentic search via Anthropic API
 
 skills/
-└── memory-search/SKILL.md  — Claude Code skill
+└── memory-search/SKILL.md — Claude Code skill
 ```

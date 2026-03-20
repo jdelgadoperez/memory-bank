@@ -195,22 +195,44 @@ Deletes all messages from the named source after a confirmation prompt. Cannot b
 ### UI
 
 ```bash
-memory-bank ui [--port PORT] [--no-browser] [--db PATH]
+memory-bank ui [-p PORT] [-B|--no-browser] [--db PATH]
 ```
 
-Launches a local web UI to browse and search your memory bank. Starts a self-contained HTTP server (no Docker required) and opens your browser automatically.
+Launches a local web UI to browse and search your memory bank. When run without a subcommand it starts a foreground HTTP server and opens your browser.
 
 | Option | Description |
 |---|---|
-| `--port PORT` / `-p PORT` | Port to listen on (default: 6333) |
-| `--no-browser` | Start the server without opening a browser tab |
+| `-p PORT` / `--port PORT` | Port to listen on (default: 6333) |
+| `-B` / `--no-browser` | Start the server without opening a browser tab |
 | `--db PATH` | Use an alternate DB path |
 
 ```bash
-memory-bank ui                   # opens http://localhost:6333
-memory-bank ui --port 8080
-memory-bank ui --no-browser
+memory-bank ui                   # foreground server, opens browser
+memory-bank ui -B                # foreground, no browser
+memory-bank ui -p 8080           # custom port
 ```
+
+#### Background daemon
+
+Manage the UI as a background process:
+
+```bash
+memory-bank ui start             # start in background, open browser
+memory-bank ui -B start          # start in background, no browser
+memory-bank ui stop              # stop the background server
+memory-bank ui restart           # stop + start
+memory-bank ui status            # check if running
+```
+
+PID is written to `~/.memory-bank/ui.pid`, logs to `~/.memory-bank/ui.log`.
+
+#### Dev mode (auto-reload)
+
+```bash
+memory-bank ui dev               # watches src/ and restarts on .py changes
+```
+
+Requires the dev extras: `uv pip install -e '.[dev]'` (installs `watchfiles`). Press Ctrl+C to stop.
 
 ### Hooks
 
@@ -326,8 +348,18 @@ Once installed, ask Claude mid-session: *"Search my chat history for X"* and it 
 ```
 src/memory_bank/
 ├── schema.py              ChatMessage dataclass + IngestResult
-├── db.py                  Qdrant wrapper (upsert, search, stats, delete)
-├── cli.py                 CLI entry point
+├── db.py                  Qdrant wrapper (upsert, search, stats, delete, sessions)
+├── cli.py                 CLI entry point + shared config
+├── mcp_server.py          FastMCP server (search_memory, get_session, list_sessions)
+├── commands/
+│   ├── ingest.py          ingest subcommands (claude-code, claude-desktop, all, custom)
+│   ├── search.py          search + sessions + session commands
+│   ├── manage.py          stats + delete commands
+│   ├── hooks.py           hooks install/uninstall/status
+│   └── mcp.py             mcp command
+├── ui/
+│   ├── server.py          HTML template + HTTP server + ui group command
+│   └── daemon.py          background daemon (start/stop/restart/status/dev)
 └── ingestors/
     ├── base.py            BaseIngestor ABC
     ├── claude_code.py     ~/.claude/projects/**/*.jsonl
