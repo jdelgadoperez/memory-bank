@@ -370,6 +370,15 @@ def search(query, limit, source, project, role, session, db, as_json, agent, min
         if snippet is None:
             snippet = 300
 
+    # --agent mode: apply token-frugal defaults unless the caller overrode them
+    if agent:
+        if limit == 10:   # user didn't explicitly pass --limit
+            limit = 5
+        if min_score == 0.0:
+            min_score = 0.5
+        if snippet is None:
+            snippet = 300
+
     db_obj = MemoryDB(Path(db) if db else None)
     try:
         results = db_obj.search(
@@ -383,6 +392,10 @@ def search(query, limit, source, project, role, session, db, as_json, agent, min
     except DatabaseLockedError:
         _print_lock_error()
         return
+
+    # Apply score filter
+    if min_score > 0.0:
+        results = [r for r in results if r.get("score", 0) >= min_score]
 
     # Apply score filter
     if min_score > 0.0:
