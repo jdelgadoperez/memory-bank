@@ -120,7 +120,7 @@ export CLAUDE_PROJECTS_DIR=/Volumes/external/claude-projects
 memory-bank ingest claude-code [--path PATH] [--db PATH]
 memory-bank ingest claude-desktop --path PATH [--db PATH]
 memory-bank ingest all [--db PATH]
-memory-bank ingest custom          # prints Python API usage
+memory-bank ingest custom                         # prints Python API usage
 ```
 
 Ingest is **idempotent** — re-running skips messages already in the DB.
@@ -154,23 +154,26 @@ memory-bank search QUERY [options]
 | `--project PROJECT` | Filter by project name (matches the folder name under `~/.claude/projects/`) |
 | `--role user\|assistant` | Only return messages from one side of the conversation |
 | `--session SESSION_ID` | Filter to a specific session |
-| `--json` | Output raw JSON instead of a table |
+| `--min-score FLOAT` | Discard results below this similarity score (0–1). Recommended: `0.5` in agent contexts |
+| `--json` | Output raw JSON (full fidelity, good for `jq` pipelines) |
+| `--agent` | Compact JSON for LLM consumption — drops `id`, date-only timestamps, 300-char snippets, defaults to limit=5 / min-score=0.5. ~60% fewer tokens than `--json` |
+| `--snippet N` | Truncate content to N characters in JSON/agent output |
 | `--db PATH` | Use an alternate DB path |
 
 #### Examples
 
 ```bash
-# Find assistant responses about Docker
+# Human-readable table
 memory-bank search "docker networking" --role assistant
 
-# Search only within a specific project
-memory-bank search "auth bug" --project my-app
+# Compact JSON for LLM/agent use (~60% fewer tokens)
+memory-bank search "auth bug" --agent --project my-app
 
-# Get JSON output for scripting
-memory-bank search "deployment pipeline" --limit 5 --json
+# Full JSON for jq pipelines
+memory-bank search "deployment pipeline" --limit 5 --json --snippet 400
 
-# Search a specific source
-memory-bank search "kubernetes config" --source claude-code
+# Filter out low-quality hits
+memory-bank search "kubernetes config" --source claude-code --min-score 0.5
 ```
 
 ### Stats
@@ -188,6 +191,46 @@ memory-bank delete SOURCE
 ```
 
 Deletes all messages from the named source after a confirmation prompt. Cannot be undone.
+
+### UI
+
+```bash
+memory-bank ui [--port PORT] [--no-browser] [--db PATH]
+```
+
+Launches a local web UI to browse and search your memory bank. Starts a self-contained HTTP server (no Docker required) and opens your browser automatically.
+
+| Option | Description |
+|---|---|
+| `--port PORT` / `-p PORT` | Port to listen on (default: 6333) |
+| `--no-browser` | Start the server without opening a browser tab |
+| `--db PATH` | Use an alternate DB path |
+
+```bash
+memory-bank ui                   # opens http://localhost:6333
+memory-bank ui --port 8080
+memory-bank ui --no-browser
+```
+
+### Hooks
+
+Keep your DB current automatically by running ingest at the end of every Claude Code session:
+
+```bash
+memory-bank hooks install              # adds a Stop hook (recommended)
+memory-bank hooks install --on start   # hook into SessionStart instead
+memory-bank hooks install --on both    # both events
+memory-bank hooks status               # check what's installed
+memory-bank hooks uninstall            # remove all memory-bank hooks
+```
+
+The hook runs `memory-bank ingest claude-code` in the background and appends output to `~/.memory-bank/ingest.log`. Your existing hooks in `~/.claude/settings.json` are preserved. Re-running `install` is safe — already-installed hooks are skipped.
+
+| `--on` value | Trigger |
+|---|---|
+| `stop` | After each session ends (default, recommended) |
+| `start` | When a new session begins |
+| `both` | Both events |
 
 ---
 
