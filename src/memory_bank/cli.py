@@ -641,6 +641,7 @@ def ui(ctx, port, no_browser, db):
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Memory Bank</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🧠</text></svg>">
 <style>
   :root{--bg:#0f1117;--surface:#1a1d27;--border:#2a2d3a;--accent:#7c6af7;--accent2:#a78bfa;--text:#e2e8f0;--muted:#64748b;--user:#3b82f6;--assistant:#10b981;--gap:1rem}
   *{box-sizing:border-box;margin:0;padding:0}
@@ -1111,7 +1112,7 @@ loadStats().then(()=>loadSessions());
     # Start server
     # ------------------------------------------------------------------
     server = HTTPServer(("127.0.0.1", port), Handler)
-    url = f"http://localhost:{port}"
+    url = _ui_url(port)
     console.print(
         f"[bold magenta]Memory Bank UI[/bold magenta]  [cyan]{url}[/cyan]"
     )
@@ -1154,6 +1155,20 @@ def _is_pid_alive(pid: int) -> bool:
         return False
     except PermissionError:
         return True
+
+
+_LOCAL_DOMAIN = "memory.local"
+
+
+def _ui_url(port: int) -> str:
+    """Return the best URL for the UI, preferring memory.local over localhost."""
+    import socket
+
+    try:
+        socket.getaddrinfo(_LOCAL_DOMAIN, port, socket.AF_INET)
+        return f"http://{_LOCAL_DOMAIN}"
+    except socket.gaierror:
+        return f"http://localhost:{port}"
 
 
 @ui.command("start", context_settings=CONTEXT_SETTINGS)
@@ -1209,7 +1224,7 @@ def ui_start(ctx):
 
     _UI_PID_FILE.write_text(json.dumps({"pid": proc.pid, "port": port}) + "\n")
 
-    url = f"http://localhost:{port}"
+    url = _ui_url(port)
     console.print(
         f"[bold green]Started[/bold green] UI server in background "
         f"(PID [cyan]{proc.pid}[/cyan], [cyan]{url}[/cyan])"
@@ -1245,6 +1260,60 @@ def ui_stop():
     )
 
 
+@ui.command("restart", context_settings=CONTEXT_SETTINGS)
+@click.pass_context
+def ui_restart(ctx):
+    """Restart the background UI server."""
+    ctx.invoke(ui_stop)
+    ctx.invoke(ui_start)
+
+
+@ui.command("dev", context_settings=CONTEXT_SETTINGS)
+@click.pass_context
+def ui_dev(ctx):
+    """Run the UI with auto-reload on source changes.
+
+    Watches the memory_bank source directory and restarts the background
+    server whenever a Python file changes. Press Ctrl+C to stop.
+
+    \b
+    Requires the dev extras:
+      uv pip install -e '.[dev]'
+    """
+    try:
+        from watchfiles import watch
+    except ImportError:
+        console.print(
+            "[bold red]Error:[/bold red] watchfiles is not installed.\n"
+            "[dim]Install dev extras: [cyan]uv pip install -e '.[dev]'[/cyan][/dim]"
+        )
+        return
+
+    src_dir = Path(__file__).resolve().parent
+    console.print(
+        f"[bold blue]Watching[/bold blue] [cyan]{src_dir}[/cyan] for changes\u2026"
+    )
+    console.print("[dim]Press Ctrl+C to stop.[/dim]\n")
+
+    # Suppress browser opens during dev — restarts should be silent
+    ctx.obj["no_browser"] = True
+
+    # Ensure server is running to start
+    ctx.invoke(ui_stop)
+    ctx.invoke(ui_start)
+
+    try:
+        for changes in watch(src_dir, watch_filter=lambda _, path: path.endswith(".py")):
+            changed_files = [str(Path(p).name) for _, p in changes]
+            console.print(
+                f"\n[yellow]Changed:[/yellow] {', '.join(changed_files)}"
+            )
+            ctx.invoke(ui_stop)
+            ctx.invoke(ui_start)
+    except KeyboardInterrupt:
+        console.print("\n[dim]Dev mode stopped.[/dim]")
+
+
 @ui.command("status", context_settings=CONTEXT_SETTINGS)
 def ui_status():
     """Check whether a background UI server is running."""
@@ -1257,7 +1326,7 @@ def ui_status():
     if _is_pid_alive(pid):
         console.print(
             f"[bold green]Running[/bold green]  PID [cyan]{pid}[/cyan]  "
-            f"Port [cyan]{port}[/cyan]  [dim]http://localhost:{port}[/dim]"
+            f"Port [cyan]{port}[/cyan]  [dim]{_ui_url(port)}[/dim]"
         )
     else:
         console.print(f"[yellow]Not running[/yellow] (stale pid file, PID {pid}).")
