@@ -5,42 +5,59 @@ import hashlib
 import math
 import os
 import struct
-import warnings
-from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Generator
+from typing import Any
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
     Distance,
-    VectorParams,
-    PointStruct,
-    Filter,
     FieldCondition,
+    Filter,
     MatchValue,
-    PayloadSchemaType,
+    PointStruct,
+    Range,
+    VectorParams,
 )
 
-from .schema import ChatMessage, Session
+from .schema import ChatMessage
 
-MESSAGES_COLLECTION = "chat_history"
-SESSIONS_COLLECTION = "sessions"
+COLLECTION = "chat_history"
 EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"   # fast, 384-dim, runs locally via fastembed
 VECTOR_SIZE = 384
 
 DEFAULT_DB_PATH = Path.home() / ".memory-bank" / "qdrant"
 
-# Keep old name as alias for backward compat in CLI references
-COLLECTION = MESSAGES_COLLECTION
-
-
-class DatabaseLockedError(RuntimeError):
-    """Raised when the Qdrant DB is locked by another process."""
-
 
 def get_db_path() -> Path:
     env = os.environ.get("MEMORY_BANK_DB")
     return Path(env) if env else DEFAULT_DB_PATH
+
+
+def parse_time_expr(expr: str) -> str:
+    """
+    Parse a time expression to an ISO 8601 UTC string.
+
+    Accepts:
+      - Relative: "7d", "30d", "2w", "1y"
+      - Absolute: "2025-01-01", "2025-01-01T12:00:00", or any dateutil-parseable string
+    Returns an ISO 8601 string like "2025-01-01T00:00:00+00:00".
+    """
+    import re
+
+    expr = expr.strip()
+    m = re.fullmatch(r"(\d+)([dwmy])", expr, re.IGNORECASE)
+    if m:
+        n, unit = int(m.group(1)), m.group(2).lower()
+        delta_map = {"d": 1, "w": 7, "m": 30, "y": 365}
+        dt = datetime.now(timezone.utc) - timedelta(days=n * delta_map[unit])
+        return dt.isoformat()
+    # Absolute date — parse with dateutil
+    from dateutil import parser as dtp
+    dt = dtp.parse(expr)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.isoformat()
 
 
 def _load_embedder():
@@ -79,92 +96,36 @@ def _hash_embed(text: str, dim: int = VECTOR_SIZE) -> list[float]:
 
 
 class MemoryDB:
-    """Thin wrapper around embedded Qdrant collections.
-
-    The Qdrant client is acquired per-operation and released after,
-    so the exclusive file lock is only held during active I/O.
-    The fastembed model stays loaded in memory across operations.
-    """
+    """Thin wrapper around an embedded Qdrant collection."""
 
     def __init__(self, path: Path | None = None):
         self.path = path or get_db_path()
         self.path.mkdir(parents=True, exist_ok=True)
+        self._client = QdrantClient(path=str(self.path))
         self._embedder = None   # loaded on first call to _embed()
         self._embedder_loaded = False
-        self._collections_verified = False
+        self._ensure_collection()
 
-    @contextmanager
-    def _connect(self) -> Generator[QdrantClient, None, None]:
-        """Acquire the Qdrant client for the duration of an operation."""
+    def _ensure_collection(self) -> None:
+        existing = {c.name for c in self._client.get_collections().collections}
+        if COLLECTION not in existing:
+            self._client.create_collection(
+                collection_name=COLLECTION,
+                vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
+            )
+        # Payload index on source speeds up stats/filter queries.
+        # No-op in local (embedded) mode but good practice for server deployments.
         try:
-            client = QdrantClient(path=str(self.path))
-        except RuntimeError as exc:
-            if "already accessed" in str(exc):
-                raise DatabaseLockedError(
-                    "Database is locked by another process. "
-                    "If the UI server is running, stop it with Ctrl+C, "
-                    "or use the UI's built-in search."
-                ) from exc
-            raise
-        try:
-            if not self._collections_verified:
-                self._ensure_collections(client)
-                self._collections_verified = True
-            yield client
-        finally:
-            client.close()
-
-    def _ensure_collections(self, client: QdrantClient) -> None:
-        existing = {c.name for c in client.get_collections().collections}
-        vector_config = VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE)
-
-        if MESSAGES_COLLECTION not in existing:
-            client.create_collection(
-                collection_name=MESSAGES_COLLECTION,
-                vectors_config=vector_config,
+            self._client.create_payload_index(
+                collection_name=COLLECTION,
+                field_name="source",
+                field_schema="keyword",
             )
-
-        if SESSIONS_COLLECTION not in existing:
-            client.create_collection(
-                collection_name=SESSIONS_COLLECTION,
-                vectors_config=vector_config,
-            )
-
-        self._ensure_indexes(client)
-
-    def _ensure_indexes(self, client: QdrantClient) -> None:
-        """Create payload indexes for filter performance (idempotent).
-
-        Note: payload indexes have no effect in embedded Qdrant (local mode).
-        They are created here so the code works correctly if switched to
-        server mode later.
-        """
-        with warnings.catch_warnings():
-            warnings.filterwarnings(
-                "ignore", message="Payload indexes have no effect"
-            )
-            for field_name in ["session_id", "source", "project", "role"]:
-                try:
-                    client.create_payload_index(
-                        collection_name=MESSAGES_COLLECTION,
-                        field_name=field_name,
-                        field_schema=PayloadSchemaType.KEYWORD,
-                    )
-                except Exception:
-                    pass
-
-            for field_name in ["source", "project"]:
-                try:
-                    client.create_payload_index(
-                        collection_name=SESSIONS_COLLECTION,
-                        field_name=field_name,
-                        field_schema=PayloadSchemaType.KEYWORD,
-                    )
-                except Exception:
-                    pass
+        except Exception:
+            pass  # Already exists or unsupported — harmless
 
     # ------------------------------------------------------------------
-    # Write — messages
+    # Write
     # ------------------------------------------------------------------
 
     def upsert(self, messages: list[ChatMessage]) -> tuple[int, int]:
@@ -172,90 +133,28 @@ class MemoryDB:
         if not messages:
             return 0, 0
 
-        with self._connect() as client:
-            existing_ids = self._existing_ids(
-                client, MESSAGES_COLLECTION, {m.id for m in messages}
-            )
-            new_msgs = [m for m in messages if m.id not in existing_ids]
+        existing_ids = self._existing_ids({m.id for m in messages})
+        new_msgs = [m for m in messages if m.id not in existing_ids]
 
-            if not new_msgs:
-                return 0, len(messages)
+        if not new_msgs:
+            return 0, len(messages)
 
-            # Embed outside the connect block would be ideal, but we need
-            # existing_ids check first. Embedding is the slow part but
-            # doesn't touch Qdrant — it runs on the in-memory model.
-            texts = [m.content for m in new_msgs]
-            vectors = self._embed(texts)
-
-            points = [
-                PointStruct(
-                    id=_id_to_uint(m.id),
-                    vector=vec,
-                    payload=m.to_payload(),
-                )
-                for m, vec in zip(new_msgs, vectors)
-            ]
-            client.upsert(collection_name=MESSAGES_COLLECTION, points=points)
-        return len(new_msgs), len(messages) - len(new_msgs)
-
-    # ------------------------------------------------------------------
-    # Write — sessions (unconditional overwrite)
-    # ------------------------------------------------------------------
-
-    def upsert_sessions(self, sessions: list[Session]) -> int:
-        """Upsert session records, skipping unchanged ones. Returns count upserted."""
-        if not sessions:
-            return 0
-
-        with self._connect() as client:
-            # Check which sessions already exist and compare message counts
-            existing_ids = self._existing_ids(
-                client, SESSIONS_COLLECTION, {s.id for s in sessions}
-            )
-
-            # For sessions that exist, fetch their current message_count to detect changes
-            changed_sessions: list[Session] = []
-            if existing_ids:
-                existing_payloads: dict[str, dict] = {}
-                uint_ids = [_id_to_uint(sid) for sid in existing_ids]
-                results = client.retrieve(
-                    collection_name=SESSIONS_COLLECTION,
-                    ids=uint_ids,
-                    with_payload=["id", "message_count"],
-                )
-                for r in results:
-                    existing_payloads[r.payload["id"]] = r.payload
-
-                for s in sessions:
-                    if s.id not in existing_ids:
-                        changed_sessions.append(s)
-                    else:
-                        old = existing_payloads.get(s.id, {})
-                        if old.get("message_count") != s.message_count:
-                            changed_sessions.append(s)
-            else:
-                changed_sessions = list(sessions)
-
-        if not changed_sessions:
-            return 0
-
-        texts = [s.summary for s in changed_sessions]
+        texts = [m.content for m in new_msgs]
         vectors = self._embed(texts)
 
         points = [
             PointStruct(
-                id=_id_to_uint(s.id),
+                id=_id_to_uint(m.id),
                 vector=vec,
-                payload=s.to_payload(),
+                payload=m.to_payload(),
             )
-            for s, vec in zip(changed_sessions, vectors)
+            for m, vec in zip(new_msgs, vectors)
         ]
-        with self._connect() as client:
-            client.upsert(collection_name=SESSIONS_COLLECTION, points=points)
-        return len(changed_sessions)
+        self._client.upsert(collection_name=COLLECTION, points=points)
+        return len(new_msgs), len(messages) - len(new_msgs)
 
     # ------------------------------------------------------------------
-    # Search — messages
+    # Search
     # ------------------------------------------------------------------
 
     def search(
@@ -266,211 +165,246 @@ class MemoryDB:
         project: str | None = None,
         role: str | None = None,
         session_id: str | None = None,
-        date_from: str | None = None,
-        date_to: str | None = None,
+        since: str | None = None,
+        before: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Semantic search across messages with optional metadata filters."""
+        """
+        Semantic search with optional metadata and time filters.
+
+        ``since`` and ``before`` are ISO 8601 strings (use :func:`parse_time_expr`
+        to convert human-friendly expressions first).  Timestamps are stored as
+        ISO strings so comparison is lexicographic — which works correctly as long
+        as all timestamps share the same format (guaranteed by the ingestors).
+        """
         query_vec = self._embed([query])[0]
         flt = self._build_filter(
             source=source, project=project, role=role, session_id=session_id
         )
 
-        # Fetch extra results if date filtering will reduce the set
-        fetch_limit = limit * 3 if (date_from or date_to) else limit
-        with self._connect() as client:
-            response = client.query_points(
-                collection_name=MESSAGES_COLLECTION,
-                query=query_vec,
-                query_filter=flt,
-                limit=fetch_limit,
-                with_payload=True,
-            )
-        results = [
-            {"score": r.score, **r.payload}
-            for r in response.points
-        ]
+        # When time filters are active, over-fetch to compensate for post-filtering.
+        fetch_limit = limit * 8 if (since or before) else limit
 
-        if date_from:
-            results = [r for r in results if r.get("timestamp", "") >= date_from]
-        if date_to:
-            date_to_end = date_to + "T23:59:59.999Z"
-            results = [r for r in results if r.get("timestamp", "") <= date_to_end]
+        response = self._client.query_points(
+            collection_name=COLLECTION,
+            query=query_vec,
+            query_filter=flt,
+            limit=fetch_limit,
+            with_payload=True,
+        )
+        results = [{"score": r.score, **r.payload} for r in response.points]
+
+        # Post-filter by timestamp (ISO string lexicographic comparison is correct
+        # for consistently-formatted timestamps from our ingestors).
+        if since:
+            results = [r for r in results if (r.get("timestamp") or "") >= since]
+        if before:
+            results = [r for r in results if (r.get("timestamp") or "") <= before]
 
         return results[:limit]
 
     # ------------------------------------------------------------------
-    # Search — sessions
+    # Context fetch (for --context N in search)
     # ------------------------------------------------------------------
 
-    def search_sessions(
+    def get_context(
         self,
-        query: str,
-        limit: int = 10,
-        source: str | None = None,
-        project: str | None = None,
+        session_id: str,
+        timestamp: str,
+        n: int = 3,
     ) -> list[dict[str, Any]]:
-        """Semantic search across sessions."""
-        query_vec = self._embed([query])[0]
-        flt = self._build_filter(source=source, project=project)
+        """
+        Return the N messages before and N messages after *timestamp* within
+        *session_id*, ordered chronologically.  The matched message itself is
+        NOT included (the caller already has it).
+        """
+        all_msgs = self.get_session(session_id)
+        if not all_msgs:
+            return []
 
-        with self._connect() as client:
-            response = client.query_points(
-                collection_name=SESSIONS_COLLECTION,
-                query=query_vec,
-                query_filter=flt,
-                limit=limit,
+        timestamps = [m.get("timestamp", "") for m in all_msgs]
+        # Find the index of the closest message
+        try:
+            idx = timestamps.index(timestamp)
+        except ValueError:
+            # Timestamp not found exactly — find nearest
+            idx = min(range(len(timestamps)), key=lambda i: abs(timestamps[i] != timestamp))
+
+        start = max(0, idx - n)
+        end = min(len(all_msgs), idx + n + 1)
+        return [m for i, m in enumerate(all_msgs[start:end]) if (start + i) != idx]
+
+    # ------------------------------------------------------------------
+    # Session operations
+    # ------------------------------------------------------------------
+
+    def get_session(self, session_id: str) -> list[dict[str, Any]]:
+        """Return all messages from a session, sorted chronologically."""
+        flt = Filter(
+            must=[FieldCondition(key="session_id", match=MatchValue(value=session_id))]
+        )
+        records: list[dict[str, Any]] = []
+        offset = None
+        while True:
+            batch, offset = self._client.scroll(
+                collection_name=COLLECTION,
+                scroll_filter=flt,
+                limit=500,
+                offset=offset,
                 with_payload=True,
             )
-        return [
-            {"score": r.score, **r.payload}
-            for r in response.points
-        ]
-
-    # ------------------------------------------------------------------
-    # List / get — sessions
-    # ------------------------------------------------------------------
+            records.extend(r.payload for r in batch)
+            if offset is None:
+                break
+        records.sort(key=lambda r: r.get("timestamp", ""))
+        return records
 
     def list_sessions(
         self,
-        limit: int = 50,
         source: str | None = None,
         project: str | None = None,
-        date_from: str | None = None,
-        date_to: str | None = None,
+        since: str | None = None,
+        before: str | None = None,
+        limit: int | None = None,
     ) -> list[dict[str, Any]]:
-        """List sessions sorted by last_timestamp descending."""
+        """
+        List all sessions with metadata (id, project, source, date, message count).
+        Returns sessions sorted newest-first.
+        """
         flt = self._build_filter(source=source, project=project)
 
-        all_sessions: list[dict[str, Any]] = []
-        with self._connect() as client:
-            offset = None
-            while True:
-                records, offset = client.scroll(
-                    collection_name=SESSIONS_COLLECTION,
-                    limit=1000,
-                    offset=offset,
-                    scroll_filter=flt,
-                    with_payload=True,
-                )
-                for r in records:
-                    all_sessions.append(r.payload)
-                if offset is None:
-                    break
-
-        if date_from:
-            all_sessions = [
-                s for s in all_sessions
-                if s.get("last_timestamp", "") >= date_from
-            ]
-        if date_to:
-            date_to_end = date_to + "T23:59:59.999Z"
-            all_sessions = [
-                s for s in all_sessions
-                if s.get("first_timestamp", "") <= date_to_end
-            ]
-
-        all_sessions.sort(
-            key=lambda s: s.get("last_timestamp", ""), reverse=True
-        )
-        return all_sessions[:limit]
-
-    def get_session_by_id(self, session_id: str) -> dict[str, Any] | None:
-        """Get a single session by its session_id (UUID)."""
-        flt = self._build_filter(session_id=session_id)
-        with self._connect() as client:
-            records, _ = client.scroll(
-                collection_name=SESSIONS_COLLECTION,
-                limit=1,
+        sessions: dict[str, dict[str, Any]] = {}
+        offset = None
+        while True:
+            batch, offset = self._client.scroll(
+                collection_name=COLLECTION,
                 scroll_filter=flt,
-                with_payload=True,
+                limit=1000,
+                offset=offset,
+                with_payload=["session_id", "source", "project", "timestamp"],
             )
-        if not records:
-            return None
-        return records[0].payload
+            for r in batch:
+                p = r.payload
+                ts = p.get("timestamp", "")
+                # Apply time filters
+                if since and ts < since:
+                    continue
+                if before and ts > before:
+                    continue
+                sid = p.get("session_id", "")
+                if sid not in sessions:
+                    sessions[sid] = {
+                        "session_id": sid,
+                        "source": p.get("source", ""),
+                        "project": p.get("project", ""),
+                        "first_ts": ts,
+                        "last_ts": ts,
+                        "message_count": 0,
+                    }
+                s = sessions[sid]
+                s["message_count"] += 1
+                if ts < s["first_ts"]:
+                    s["first_ts"] = ts
+                if ts > s["last_ts"]:
+                    s["last_ts"] = ts
+            if offset is None:
+                break
 
-    def get_session_messages(
-        self,
-        session_id: str,
-        limit: int = 200,
-    ) -> list[dict[str, Any]]:
-        """Get all messages for a session, sorted by timestamp."""
-        flt = self._build_filter(session_id=session_id)
-
-        messages: list[dict[str, Any]] = []
-        with self._connect() as client:
-            offset = None
-            while True:
-                records, offset = client.scroll(
-                    collection_name=MESSAGES_COLLECTION,
-                    limit=min(limit, 1000),
-                    offset=offset,
-                    scroll_filter=flt,
-                    with_payload=True,
-                )
-                for r in records:
-                    messages.append(r.payload)
-                if offset is None or len(messages) >= limit:
-                    break
-
-        messages.sort(key=lambda m: m.get("timestamp", ""))
-        return messages[:limit]
+        result = sorted(sessions.values(), key=lambda s: s["last_ts"], reverse=True)
+        if limit:
+            result = result[:limit]
+        return result
 
     # ------------------------------------------------------------------
     # Stats
     # ------------------------------------------------------------------
 
     def stats(self) -> dict[str, Any]:
-        with self._connect() as client:
-            message_count = client.count(MESSAGES_COLLECTION).count
-            session_count = client.count(SESSIONS_COLLECTION).count
+        count = self._client.count(COLLECTION).count
 
-            # Count by source via scroll
-            source_counts: dict[str, int] = {}
-            offset = None
-            while True:
-                records, offset = client.scroll(
-                    collection_name=MESSAGES_COLLECTION,
-                    limit=1000,
-                    offset=offset,
-                    with_payload=["source"],
-                )
-                for r in records:
-                    src = r.payload.get("source", "unknown")
-                    source_counts[src] = source_counts.get(src, 0) + 1
-                if offset is None:
-                    break
+        # Count by source via scroll
+        source_counts: dict[str, int] = {}
+        offset = None
+        while True:
+            records, offset = self._client.scroll(
+                collection_name=COLLECTION,
+                limit=1000,
+                offset=offset,
+                with_payload=["source"],
+            )
+            for r in records:
+                src = r.payload.get("source", "unknown")
+                source_counts[src] = source_counts.get(src, 0) + 1
+            if offset is None:
+                break
 
-        embedding_status = (
-            "neural (BAAI/bge-small-en-v1.5)"
-            if self._embedder
-            else "hash-based fallback (offline)"
-        )
+        embedding_status = "neural (BAAI/bge-small-en-v1.5)" if self._embedder else "hash-based fallback (offline)"
         return {
-            "total_messages": message_count,
-            "total_sessions": session_count,
+            "total_messages": count,
             "by_source": source_counts,
             "db_path": str(self.path),
-            "collections": [MESSAGES_COLLECTION, SESSIONS_COLLECTION],
+            "collection": COLLECTION,
             "embedding_model": embedding_status,
         }
 
+    # ------------------------------------------------------------------
+    # Delete
+    # ------------------------------------------------------------------
+
     def delete_by_source(self, source: str) -> int:
-        """Delete all messages and sessions from a given source. Returns message count deleted."""
-        source_filter = Filter(
-            must=[FieldCondition(key="source", match=MatchValue(value=source))]
+        """Delete all messages from a given source. Returns count deleted."""
+        before = self._client.count(COLLECTION).count
+        self._client.delete(
+            collection_name=COLLECTION,
+            points_selector=Filter(
+                must=[FieldCondition(key="source", match=MatchValue(value=source))]
+            ),
         )
-        with self._connect() as client:
-            before = client.count(MESSAGES_COLLECTION).count
-            client.delete(
-                collection_name=MESSAGES_COLLECTION,
-                points_selector=source_filter,
-            )
-            client.delete(
-                collection_name=SESSIONS_COLLECTION,
-                points_selector=source_filter,
-            )
-            after = client.count(MESSAGES_COLLECTION).count
+        after = self._client.count(COLLECTION).count
         return before - after
+
+    def delete_before(
+        self,
+        timestamp_iso: str,
+        source: str | None = None,
+    ) -> int:
+        """
+        Delete messages with timestamp < *timestamp_iso*.
+        Optionally scope to a single source.  Returns count deleted.
+        """
+        # Collect IDs to delete via scroll (timestamp comparison is string-lexicographic)
+        conditions: list[FieldCondition] = []
+        if source:
+            conditions.append(FieldCondition(key="source", match=MatchValue(value=source)))
+        flt = Filter(must=conditions) if conditions else None
+
+        to_delete: list[int] = []
+        offset = None
+        while True:
+            batch, offset = self._client.scroll(
+                collection_name=COLLECTION,
+                scroll_filter=flt,
+                limit=1000,
+                offset=offset,
+                with_payload=["timestamp"],
+                with_vectors=False,
+            )
+            for r in batch:
+                ts = r.payload.get("timestamp", "")
+                if ts < timestamp_iso:
+                    to_delete.append(r.id)
+            if offset is None:
+                break
+
+        if not to_delete:
+            return 0
+
+        # Delete in batches of 1000
+        for i in range(0, len(to_delete), 1000):
+            self._client.delete(
+                collection_name=COLLECTION,
+                points_selector=to_delete[i : i + 1000],
+            )
+        return len(to_delete)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -492,18 +426,16 @@ class MemoryDB:
             return [vec.tolist() for vec in self._embedder.embed(texts)]
         return [_hash_embed(t) for t in texts]
 
-    @staticmethod
-    def _existing_ids(client: QdrantClient, collection: str, ids: set[str]) -> set[str]:
+    def _existing_ids(self, ids: set[str]) -> set[str]:
         uint_ids = [_id_to_uint(i) for i in ids]
-        results = client.retrieve(
-            collection_name=collection,
+        results = self._client.retrieve(
+            collection_name=COLLECTION,
             ids=uint_ids,
             with_payload=["id"],
         )
         return {r.payload["id"] for r in results}
 
-    @staticmethod
-    def _build_filter(**kwargs: str | None) -> Filter | None:
+    def _build_filter(self, **kwargs: str | None) -> Filter | None:
         conditions = [
             FieldCondition(key=k, match=MatchValue(value=v))
             for k, v in kwargs.items()
