@@ -6,6 +6,8 @@ Local vector DB for ingesting and searching Claude chat histories.
 
 ```bash
 uv pip install -e .
+# Optional: MCP server support
+uv pip install -e ".[mcp]"
 ```
 
 The `memory-bank` CLI is now available. The Qdrant DB is stored at `~/.memory-bank/qdrant/` by default.
@@ -18,8 +20,13 @@ memory-bank ingest claude-code
 
 # 2. Search
 memory-bank search "authentication bug fix"
+memory-bank search "docker networking" --since 7d --context 3
 
-# 3. Stats
+# 3. Browse sessions
+memory-bank sessions --project my-app
+memory-bank session abc123def456
+
+# 4. Stats
 memory-bank stats
 ```
 
@@ -37,11 +44,13 @@ memory-bank stats
 Keep your DB current automatically by hooking into Claude Code's session lifecycle:
 
 ```bash
-# Install a Stop hook (runs after each session — recommended)
+# Install a Stop hook (runs ingest after each session — recommended)
 memory-bank hooks install
 
-# Or hook into SessionStart instead, or both
+# Install a SessionStart hook (writes a context summary at session start)
 memory-bank hooks install --on start
+
+# Or both
 memory-bank hooks install --on both
 
 # Check what's installed
@@ -51,9 +60,38 @@ memory-bank hooks status
 memory-bank hooks uninstall
 ```
 
-The hook runs `memory-bank ingest claude-code` in the background and appends
-output to `~/.memory-bank/ingest.log`.  Your existing hooks in
-`~/.claude/settings.json` are preserved.
+The Stop hook runs `memory-bank ingest claude-code` in the background and appends
+output to `~/.memory-bank/ingest.log`.
+
+The SessionStart hook searches for past work related to the current git project
+and writes a brief summary to `~/.memory-bank/context.md`. Add this to your
+`CLAUDE.md` to give Claude automatic memory at session start:
+
+```markdown
+{{read_file ~/.memory-bank/context.md}}
+```
+
+## MCP server
+
+Run memory-bank as a native MCP server so Claude can call `search_memory`,
+`get_session`, and `list_sessions` as tools without any shell-out or SKILL.md:
+
+```bash
+memory-bank mcp
+```
+
+Add to `claude_desktop_config.json` (Claude Desktop) or Claude Code `settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "memory-bank": {
+      "command": "memory-bank",
+      "args": ["mcp"]
+    }
+  }
+}
+```
 
 ## CLI reference
 
@@ -62,14 +100,39 @@ memory-bank ingest claude-code [--path PATH]
 memory-bank ingest claude-desktop --path PATH
 memory-bank ingest all
 memory-bank ingest custom          # show Python API usage for custom sources
-memory-bank search QUERY [--limit N] [--source SOURCE] [--project PROJECT] [--role user|assistant] [--session ID] [--min-score FLOAT] [--agent] [--snippet N] [--json]
+
+memory-bank search QUERY [--limit N] [--source SOURCE] [--project PROJECT]
+                         [--role user|assistant] [--session ID]
+                         [--since EXPR] [--before EXPR] [--context N]
+                         [--min-score FLOAT] [--current-project] [--dedupe]
+                         [--agent] [--snippet N] [--json]
+
+memory-bank sessions [--source SOURCE] [--project PROJECT]
+                     [--since EXPR] [--before EXPR] [--limit N] [--json]
+
+memory-bank session SESSION_ID [--json]
+
 memory-bank stats
-memory-bank delete SOURCE
+memory-bank delete [SOURCE] [--since EXPR] [--yes]
 memory-bank ui [--port PORT] [--no-browser]
+memory-bank mcp
+
 memory-bank hooks install [--on stop|start|both]
 memory-bank hooks uninstall
 memory-bank hooks status
 ```
+
+### Time expressions (`--since` / `--before`)
+
+Accepted everywhere a time filter is available:
+
+| Expression | Meaning |
+|---|---|
+| `7d` | 7 days ago |
+| `2w` | 2 weeks ago |
+| `1m` | 1 month ago (30 days) |
+| `2025-01-01` | Absolute date |
+| `2025-01-01T12:00:00` | Absolute datetime |
 
 ## Adding a custom data source
 
@@ -126,8 +189,9 @@ ln -s /home/user/memory-bank/skills/memory-search ~/.claude/skills/memory-search
 ```
 src/memory_bank/
 ├── schema.py           — ChatMessage dataclass + IngestResult
-├── db.py               — Qdrant wrapper (upsert, search, stats, delete)
+├── db.py               — Qdrant wrapper (upsert, search, stats, delete, sessions)
 ├── cli.py              — Click CLI (memory-bank command)
+├── mcp_server.py       — FastMCP server (search_memory, get_session, list_sessions)
 └── ingestors/
     ├── base.py         — BaseIngestor ABC
     ├── claude_code.py  — ~/.claude/projects/**/*.jsonl
