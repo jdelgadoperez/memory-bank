@@ -154,23 +154,26 @@ memory-bank search QUERY [options]
 | `--project PROJECT` | Filter by project name (matches the folder name under `~/.claude/projects/`) |
 | `--role user\|assistant` | Only return messages from one side of the conversation |
 | `--session SESSION_ID` | Filter to a specific session |
-| `--json` | Output raw JSON instead of a table |
+| `--min-score FLOAT` | Discard results below this similarity score (0–1). Recommended: `0.5` in agent contexts |
+| `--json` | Output raw JSON (full fidelity, good for `jq` pipelines) |
+| `--agent` | Compact JSON for LLM consumption — drops `id`, date-only timestamps, 300-char snippets, defaults to limit=5 / min-score=0.5. ~60% fewer tokens than `--json` |
+| `--snippet N` | Truncate content to N characters in JSON/agent output |
 | `--db PATH` | Use an alternate DB path |
 
 #### Examples
 
 ```bash
-# Find assistant responses about Docker
+# Human-readable table
 memory-bank search "docker networking" --role assistant
 
-# Search only within a specific project
-memory-bank search "auth bug" --project my-app
+# Compact JSON for LLM/agent use (~60% fewer tokens)
+memory-bank search "auth bug" --agent --project my-app
 
-# Get JSON output for scripting
-memory-bank search "deployment pipeline" --limit 5 --json
+# Full JSON for jq pipelines
+memory-bank search "deployment pipeline" --limit 5 --json --snippet 400
 
-# Search a specific source
-memory-bank search "kubernetes config" --source claude-code
+# Filter out low-quality hits
+memory-bank search "kubernetes config" --source claude-code --min-score 0.5
 ```
 
 ### Stats

@@ -62,7 +62,7 @@ memory-bank ingest claude-code [--path PATH]
 memory-bank ingest claude-desktop --path PATH
 memory-bank ingest all
 memory-bank ingest custom          # show Python API usage for custom sources
-memory-bank search QUERY [--limit N] [--source SOURCE] [--project PROJECT] [--role user|assistant] [--session ID] [--json]
+memory-bank search QUERY [--limit N] [--source SOURCE] [--project PROJECT] [--role user|assistant] [--session ID] [--min-score FLOAT] [--agent] [--snippet N] [--json]
 memory-bank stats
 memory-bank delete SOURCE
 memory-bank ui [--port PORT] [--no-browser]

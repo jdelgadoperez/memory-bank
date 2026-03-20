@@ -51,11 +51,11 @@ click.rich_click.OPTION_GROUPS = {
     "memory-bank search": [
         {
             "name": "Filters",
-            "options": ["--source", "--project", "--role", "--session"],
+            "options": ["--source", "--project", "--role", "--session", "--min-score"],
         },
         {
             "name": "Output",
-            "options": ["--limit", "--json"],
+            "options": ["--limit", "--json", "--agent", "--snippet"],
         },
         {
             "name": "Advanced",
@@ -314,7 +314,33 @@ ROLE_STYLES = {
     is_flag=True,
     help="Emit raw JSON — useful for piping into other tools or agent scripts.",
 )
-def search(query, limit, source, project, role, session, db, as_json):
+@click.option(
+    "--agent",
+    is_flag=True,
+    help=(
+        "Compact JSON for LLM consumption. "
+        "Drops the id field, shortens timestamps to dates, truncates content, "
+        "and defaults to limit=5 / min-score=0.5. "
+        "Overrides --json."
+    ),
+)
+@click.option(
+    "--min-score",
+    default=0.0,
+    show_default=False,
+    metavar="FLOAT",
+    help="Discard results below this similarity score (0–1). Default: 0 (no filter). "
+         "Recommended: 0.5 in agent contexts to avoid low-quality hits.",
+)
+@click.option(
+    "--snippet",
+    default=None,
+    type=int,
+    metavar="N",
+    help="Truncate content to N characters in JSON / agent output. "
+         "Default: 300 in --agent mode, no truncation otherwise.",
+)
+def search(query, limit, source, project, role, session, db, as_json, agent, min_score, snippet):
     """Semantically search your ingested chat history.
 
     Uses vector similarity to find messages that [italic]mean[/italic] what you're looking for,
@@ -328,6 +354,15 @@ def search(query, limit, source, project, role, session, db, as_json):
     """
     from .db import MemoryDB
 
+    # --agent mode: apply token-frugal defaults unless the caller overrode them
+    if agent:
+        if limit == 10:   # user didn't explicitly pass --limit
+            limit = 5
+        if min_score == 0.0:
+            min_score = 0.5
+        if snippet is None:
+            snippet = 300
+
     db_obj = MemoryDB(Path(db) if db else None)
     results = db_obj.search(
         query=query,
@@ -338,21 +373,56 @@ def search(query, limit, source, project, role, session, db, as_json):
         session_id=session,
     )
 
+    # Apply score filter
+    if min_score > 0.0:
+        results = [r for r in results if r.get("score", 0) >= min_score]
+
     if not results:
-        console.print(
-            Panel(
-                "[yellow]No results found.[/yellow]\n"
-                "[dim]Try a different query or broaden your filters.[/dim]",
-                border_style="yellow",
-                title="[yellow]Search[/yellow]",
-                padding=(0, 2),
+        if agent or as_json:
+            import json
+            click.echo(json.dumps([]))
+        else:
+            console.print(
+                Panel(
+                    "[yellow]No results found.[/yellow]\n"
+                    "[dim]Try a different query or broaden your filters.[/dim]",
+                    border_style="yellow",
+                    title="[yellow]Search[/yellow]",
+                    padding=(0, 2),
+                )
             )
-        )
+        return
+
+    if agent:
+        import json
+
+        def _compact(r: dict) -> dict:
+            content = r.get("content", "")
+            if snippet and len(content) > snippet:
+                content = content[:snippet] + "…"
+            out: dict = {
+                "score": round(r["score"], 2),
+                "role": r.get("role", ""),
+                "src": r.get("source", ""),
+                "date": (r.get("timestamp") or "")[:10],  # YYYY-MM-DD only
+                "text": content,
+            }
+            if r.get("project"):
+                out["proj"] = r["project"]
+            if r.get("session_id"):
+                out["sid"] = r["session_id"]
+            return out
+
+        click.echo(json.dumps([_compact(r) for r in results]))
         return
 
     if as_json:
         import json
 
+        if snippet:
+            for r in results:
+                if len(r.get("content", "")) > snippet:
+                    r["content"] = r["content"][:snippet] + "…"
         click.echo(json.dumps(results, indent=2))
         return
 
