@@ -113,16 +113,8 @@ class MemoryDB:
                 collection_name=COLLECTION,
                 vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
             )
-        # Payload index on source speeds up stats/filter queries.
-        # No-op in local (embedded) mode but good practice for server deployments.
-        try:
-            self._client.create_payload_index(
-                collection_name=COLLECTION,
-                field_name="source",
-                field_schema="keyword",
-            )
-        except Exception:
-            pass  # Already exists or unsupported — harmless
+        # Payload indexes only work in Qdrant server mode, not embedded.
+        # When/if we support server mode, add create_payload_index calls here.
 
     # ------------------------------------------------------------------
     # Write

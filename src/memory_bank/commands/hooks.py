@@ -99,8 +99,7 @@ def install(trigger, settings_path):
 
     [bold]SessionStart hook[/bold]: at session start, searches the DB for past work
     related to the current project and writes a brief summary to
-    [dim]~/.memory-bank/context.md[/dim].  Add that path to your CLAUDE.md to
-    give Claude automatic memory.
+    [dim]~/.memory-bank/context.md[/dim].
 
     Appends entries to settings.json. Existing hooks are preserved.
     Re-running is safe — already-installed hooks are skipped.
@@ -142,9 +141,7 @@ def install(trigger, settings_path):
         if trigger in ("start", "both"):
             console.print(
                 "\n[dim]SessionStart hook writes context to "
-                "[bold]~/.memory-bank/context.md[/bold].\n"
-                "Add this to your CLAUDE.md to surface it automatically:\n"
-                "  [cyan]{{read_file ~/.memory-bank/context.md}}[/cyan][/dim]"
+                "[bold]~/.memory-bank/context.md[/bold].[/dim]"
             )
     else:
         console.print("[dim]Nothing changed.[/dim]")
