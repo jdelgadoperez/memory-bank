@@ -62,7 +62,7 @@ memory-bank ingest claude-code [--path PATH]
 memory-bank ingest claude-desktop --path PATH
 memory-bank ingest all
 memory-bank ingest custom          # show Python API usage for custom sources
-memory-bank search QUERY [--limit N] [--source SOURCE] [--project PROJECT] [--role user|assistant] [--json]
+memory-bank search QUERY [--limit N] [--source SOURCE] [--project PROJECT] [--role user|assistant] [--session ID] [--min-score FLOAT] [--agent] [--snippet N] [--json]
 memory-bank stats
 memory-bank delete SOURCE
 memory-bank ui [--port PORT] [--no-browser]
@@ -120,8 +120,6 @@ The `memory-search` skill in `skills/memory-search/SKILL.md` teaches Claude to u
 ```bash
 ln -s /home/user/memory-bank/skills/memory-search ~/.claude/skills/memory-search
 ```
-
-Or run the session start hook once to install it automatically.
 
 ## Project structure
 

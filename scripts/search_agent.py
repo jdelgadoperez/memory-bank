@@ -24,50 +24,39 @@ import anthropic
 from memory_bank.db import MemoryDB
 
 SYSTEM_PROMPT = """\
-You are a personal memory assistant. You have access to a search tool that queries \
-the user's past Claude chat history stored in a local vector database.
-
-When the user asks a question about past conversations or wants to find something \
-from their chat history:
-1. Call the search_memory tool with a clear, targeted query
-2. Review the results and synthesize a helpful answer
-3. Quote relevant content where useful
-4. If results are sparse, try a second search with a rephrased query
-
-Be concise. Cite the source, project, and approximate date of relevant messages.
+You are a personal memory assistant with access to the user's past Claude chat history.
+When asked about past conversations: call search_memory, synthesize an answer, quote briefly where useful.
+If results are sparse, retry with a rephrased query. Be concise. Cite src, proj, date.
 """
 
+# Compact tool schema — descriptions kept short to minimise prompt tokens.
 TOOLS = [
     {
         "name": "search_memory",
-        "description": (
-            "Semantic search over the user's ingested Claude chat history. "
-            "Returns the most relevant past messages ranked by similarity."
-        ),
+        "description": "Semantic search over ingested Claude chat history. Returns ranked results.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Natural language search query",
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Max results to return (default 8)",
-                    "default": 8,
+                "query": {"type": "string", "description": "Search query"},
+                "limit": {"type": "integer", "description": "Max results (default 5)"},
+                "min_score": {
+                    "type": "number",
+                    "description": "Minimum similarity score 0–1 (default 0.5)",
                 },
                 "source": {
                     "type": "string",
-                    "description": "Filter by source: 'claude-code' or 'claude-desktop'",
+                    "description": "Filter by source: claude-code | claude-desktop",
                 },
-                "project": {
-                    "type": "string",
-                    "description": "Filter by project name",
-                },
+                "project": {"type": "string", "description": "Filter by project name"},
                 "role": {
                     "type": "string",
                     "enum": ["user", "assistant"],
-                    "description": "Filter by message role",
+                    "description": "Filter by role",
+                },
+                "session_id": {"type": "string", "description": "Filter to a specific session"},
+                "snippet": {
+                    "type": "integer",
+                    "description": "Truncate each result's text to N chars (default 300)",
                 },
             },
             "required": ["query"],
@@ -75,18 +64,45 @@ TOOLS = [
     }
 ]
 
+_DEFAULT_SNIPPET = 300
+_DEFAULT_LIMIT = 5
+_DEFAULT_MIN_SCORE = 0.5
+
 
 def run_search_tool(db: MemoryDB, tool_input: dict) -> str:
     results = db.search(
         query=tool_input["query"],
-        limit=tool_input.get("limit", 8),
+        limit=tool_input.get("limit", _DEFAULT_LIMIT),
         source=tool_input.get("source"),
         project=tool_input.get("project"),
         role=tool_input.get("role"),
+        session_id=tool_input.get("session_id"),
     )
     if not results:
-        return "No results found."
-    return json.dumps(results, indent=2)
+        return "[]"
+
+    min_score = tool_input.get("min_score", _DEFAULT_MIN_SCORE)
+    snippet = tool_input.get("snippet", _DEFAULT_SNIPPET)
+    results = [r for r in results if r.get("score", 0) >= min_score]
+
+    def _compact(r: dict) -> dict:
+        text = r.get("content", "")
+        if snippet and len(text) > snippet:
+            text = text[:snippet] + "…"
+        out: dict = {
+            "score": round(r["score"], 2),
+            "role": r.get("role", ""),
+            "src": r.get("source", ""),
+            "date": (r.get("timestamp") or "")[:10],
+            "text": text,
+        }
+        if r.get("project"):
+            out["proj"] = r["project"]
+        if r.get("session_id"):
+            out["sid"] = r["session_id"]
+        return out
+
+    return json.dumps([_compact(r) for r in results])
 
 
 def agent_loop(client: anthropic.Anthropic, db: MemoryDB, user_message: str) -> str:
