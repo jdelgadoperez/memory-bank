@@ -18,7 +18,10 @@ The `memory-bank` CLI is now available. The Qdrant DB is stored at `~/.memory-ba
 # 1. Ingest Claude Code history
 memory-bank ingest claude-code
 
-# 2. Search
+# 2. Ingest ChatGPT history
+memory-bank ingest chatgpt -p '~/Documents/ChatGPT Export'
+
+# 3. Search
 memory-bank search "authentication bug fix"
 memory-bank search "docker networking" --since 7d --context 3
 
@@ -93,6 +96,7 @@ Add to `claude_desktop_config.json` (Claude Desktop) or Claude Code `settings.js
 ```
 memory-bank ingest claude-code [--path PATH]
 memory-bank ingest claude-desktop --path PATH
+memory-bank ingest chatgpt --path PATH
 memory-bank ingest all
 memory-bank ingest custom          # show Python API usage for custom sources
 
@@ -205,6 +209,7 @@ src/memory_bank/
     ├── base.py            — BaseIngestor ABC
     ├── claude_code.py     — ~/.claude/projects/**/*.jsonl
     ├── claude_desktop.py  — Claude Desktop JSON export
+    ├── chatgpt.py         — ChatGPT data export (conversations.json)
     └── custom.py          — Generic mapper-based ingestor
 
 scripts/

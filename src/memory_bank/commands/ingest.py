@@ -87,6 +87,40 @@ def ingest_claude_desktop(path, db):
     _run_ingest(ingestor, db_path=Path(db) if db else None)
 
 
+@ingest.command("chatgpt", context_settings=CONTEXT_SETTINGS)
+@click.option(
+    "--path",
+    "-p",
+    type=click.Path(),
+    required=True,
+    metavar="PATH",
+    help="Path to your ChatGPT data export directory or conversations.json file.",
+)
+@click.option(
+    "--db",
+    type=click.Path(),
+    default=None,
+    envvar="MEMORY_BANK_DB",
+    metavar="DIR",
+    help="Override the Qdrant DB storage path. Env: [dim]MEMORY_BANK_DB[/dim].",
+)
+def ingest_chatgpt(path, db):
+    """Ingest conversations exported from ChatGPT.
+
+    Export your history from ChatGPT ([italic]Settings → Data Controls → Export Data[/italic]),
+    then point this command at the resulting directory or conversations.json file.
+
+    \b
+    Examples:
+      memory-bank ingest chatgpt -p '~/Documents/ChatGPT Export'
+      memory-bank ingest chatgpt -p conversations.json
+    """
+    from memory_bank.ingestors.chatgpt import ChatGPTIngestor
+
+    ingestor = ChatGPTIngestor(path=Path(path))
+    _run_ingest(ingestor, db_path=Path(db) if db else None)
+
+
 @ingest.command("all", context_settings=CONTEXT_SETTINGS)
 @click.option(
     "--db",
