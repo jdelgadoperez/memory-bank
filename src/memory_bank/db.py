@@ -280,7 +280,10 @@ class MemoryDB:
                 scroll_filter=flt,
                 limit=1000,
                 offset=offset,
-                with_payload=["session_id", "source", "project", "timestamp"],
+                with_payload=[
+                    "session_id", "source", "project", "timestamp",
+                    "role", "content", "model", "git_branch",
+                ],
             )
             for r in batch:
                 p = r.payload
@@ -299,6 +302,8 @@ class MemoryDB:
                         "first_ts": ts,
                         "last_ts": ts,
                         "message_count": 0,
+                        "title": "",
+                        "model": "",
                     }
                 s = sessions[sid]
                 s["message_count"] += 1
@@ -306,6 +311,13 @@ class MemoryDB:
                     s["first_ts"] = ts
                 if ts > s["last_ts"]:
                     s["last_ts"] = ts
+                # Grab title from first user message
+                if not s["title"] and p.get("role") == "user":
+                    text = (p.get("content") or "").strip()
+                    s["title"] = text[:120] + ("..." if len(text) > 120 else "")
+                # Grab model from first message that has it
+                if not s["model"] and p.get("model"):
+                    s["model"] = p["model"]
             if offset is None:
                 break
 
