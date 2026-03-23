@@ -126,7 +126,7 @@ def cli(ctx):
 
 
 def _run_ingest(ingestor, db_path: Path | None = None):
-    from .db import MemoryDB
+    from .router import resolve_router
     from .schema import IngestResult
 
     source = ingestor.source_name
@@ -138,7 +138,9 @@ def _run_ingest(ingestor, db_path: Path | None = None):
             console.print(f"[bold red]Error:[/bold red] {e}")
         return result
 
-    db = MemoryDB(db_path)
+    router = resolve_router(db_path=db_path)
+    route_label = "via UI server" if type(router).__name__ == "HttpRouter" else "direct"
+    console.print(f"[dim]Ingest mode: {route_label}[/dim]")
 
     with console.status(f"[bold magenta]Ingesting [cyan]{source}[/cyan]…[/bold magenta]"):
         batch: list = []
@@ -146,15 +148,17 @@ def _run_ingest(ingestor, db_path: Path | None = None):
             result.total_found += 1
             batch.append(msg)
             if len(batch) >= BATCH_SIZE:
-                ins, skp = db.upsert(batch)
+                ins, skp = router.upsert(batch)
                 result.inserted += ins
                 result.skipped += skp
                 batch = []
 
         if batch:
-            ins, skp = db.upsert(batch)
+            ins, skp = router.upsert(batch)
             result.inserted += ins
             result.skipped += skp
+
+    router.close()
 
     console.print(
         f"[bold green]✓[/bold green] [cyan]{source}[/cyan]: "

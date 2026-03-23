@@ -545,6 +545,45 @@ def ui(ctx, port, no_browser, db):
                 self.send_response(404)
                 self.end_headers()
 
+        def do_POST(self):
+            parsed = urlparse(self.path)
+            path = parsed.path
+
+            if path == "/api/ingest":
+                content_length = int(self.headers.get("Content-Length", 0))
+                if content_length == 0:
+                    self.send_json({"error": "empty request body"}, 400)
+                    return
+
+                try:
+                    body = json.loads(self.rfile.read(content_length))
+                except (json.JSONDecodeError, ValueError) as exc:
+                    self.send_json({"error": f"invalid JSON: {exc}"}, 400)
+                    return
+
+                raw_messages = body.get("messages")
+                if not raw_messages or not isinstance(raw_messages, list):
+                    self.send_json({"error": "messages must be a non-empty list"}, 422)
+                    return
+
+                try:
+                    from memory_bank.schema import ChatMessage
+
+                    messages = [ChatMessage.from_payload(m) for m in raw_messages]
+                    inserted, skipped = memory_db.upsert(messages)
+                    self.send_json({
+                        "inserted": inserted,
+                        "skipped": skipped,
+                        "batch_size": len(messages),
+                    })
+                except (KeyError, TypeError) as exc:
+                    self.send_json({"error": f"invalid message format: {exc}"}, 422)
+                except Exception as exc:
+                    self.send_json({"error": f"ingest failed: {exc}"}, 500)
+            else:
+                self.send_response(404)
+                self.end_headers()
+
     server = HTTPServer(("127.0.0.1", port), Handler)
     url = _ui_url(port)
     console.print(
