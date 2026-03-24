@@ -1,6 +1,6 @@
 # Memory Bank
 
-Local vector DB for ingesting and searching Claude chat histories.
+Local vector DB for ingesting and searching AI chat histories (Claude Code, Claude Desktop, ChatGPT).
 
 ## Setup
 
@@ -25,11 +25,11 @@ memory-bank ingest chatgpt -p '~/Documents/ChatGPT Export'
 memory-bank search "authentication bug fix"
 memory-bank search "docker networking" --since 7d --context 3
 
-# 3. Browse sessions
+# 4. Browse sessions
 memory-bank sessions --project my-app
 memory-bank session abc123def456
 
-# 4. Stats
+# 5. Stats
 memory-bank stats
 ```
 

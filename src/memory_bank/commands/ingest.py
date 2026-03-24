@@ -9,12 +9,13 @@ from memory_bank.cli import CONTEXT_SETTINGS, console, _run_ingest, cli
 
 @cli.group(context_settings=CONTEXT_SETTINGS)
 def ingest():
-    """Ingest chat history from Claude Code, Claude Desktop, or a custom source.
+    """Ingest chat history from Claude Code, Claude Desktop, ChatGPT, or a custom source.
 
     \b
     Quick start:
       memory-bank ingest claude-code              # auto-detects ~/.claude/projects
       memory-bank ingest claude-desktop -p export.json
+      memory-bank ingest chatgpt -p ~/ChatGPT-export   # ChatGPT data export
       memory-bank ingest all                      # all auto-detectable sources
     """
 
@@ -135,6 +136,9 @@ def ingest_all(db):
 
     Runs [cyan]claude-code[/cyan] automatically. Also runs [cyan]claude-desktop[/cyan] if its
     default path is found — otherwise prints a skip notice.
+
+    [dim]Note: ChatGPT requires a path to the export directory, so it is not included
+    in 'ingest all'. Run 'ingest chatgpt -p PATH' separately.[/dim]
     """
     from memory_bank.ingestors.claude_code import ClaudeCodeIngestor
     from memory_bank.ingestors.claude_desktop import ClaudeDesktopIngestor
