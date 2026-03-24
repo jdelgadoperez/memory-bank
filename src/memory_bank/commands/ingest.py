@@ -9,12 +9,13 @@ from memory_bank.cli import CONTEXT_SETTINGS, console, _run_ingest, cli
 
 @cli.group(context_settings=CONTEXT_SETTINGS)
 def ingest():
-    """Ingest chat history from Claude Code, Claude Desktop, or a custom source.
+    """Ingest chat history from Claude Code, Claude Desktop, ChatGPT, or a custom source.
 
     \b
     Quick start:
       memory-bank ingest claude-code              # auto-detects ~/.claude/projects
       memory-bank ingest claude-desktop -p export.json
+      memory-bank ingest chatgpt -p ~/ChatGPT-export   # ChatGPT data export
       memory-bank ingest all                      # all auto-detectable sources
     """
 
@@ -87,6 +88,40 @@ def ingest_claude_desktop(path, db):
     _run_ingest(ingestor, db_path=Path(db) if db else None)
 
 
+@ingest.command("chatgpt", context_settings=CONTEXT_SETTINGS)
+@click.option(
+    "--path",
+    "-p",
+    type=click.Path(),
+    required=True,
+    metavar="PATH",
+    help="Path to your ChatGPT data export directory or conversations.json file.",
+)
+@click.option(
+    "--db",
+    type=click.Path(),
+    default=None,
+    envvar="MEMORY_BANK_DB",
+    metavar="DIR",
+    help="Override the Qdrant DB storage path. Env: [dim]MEMORY_BANK_DB[/dim].",
+)
+def ingest_chatgpt(path, db):
+    """Ingest conversations exported from ChatGPT.
+
+    Export your history from ChatGPT ([italic]Settings → Data Controls → Export Data[/italic]),
+    then point this command at the resulting directory or conversations.json file.
+
+    \b
+    Examples:
+      memory-bank ingest chatgpt -p '~/Documents/ChatGPT Export'
+      memory-bank ingest chatgpt -p conversations.json
+    """
+    from memory_bank.ingestors.chatgpt import ChatGPTIngestor
+
+    ingestor = ChatGPTIngestor(path=Path(path))
+    _run_ingest(ingestor, db_path=Path(db) if db else None)
+
+
 @ingest.command("all", context_settings=CONTEXT_SETTINGS)
 @click.option(
     "--db",
@@ -101,6 +136,9 @@ def ingest_all(db):
 
     Runs [cyan]claude-code[/cyan] automatically. Also runs [cyan]claude-desktop[/cyan] if its
     default path is found — otherwise prints a skip notice.
+
+    [dim]Note: ChatGPT requires a path to the export directory, so it is not included
+    in 'ingest all'. Run 'ingest chatgpt -p PATH' separately.[/dim]
     """
     from memory_bank.ingestors.claude_code import ClaudeCodeIngestor
     from memory_bank.ingestors.claude_desktop import ClaudeDesktopIngestor
