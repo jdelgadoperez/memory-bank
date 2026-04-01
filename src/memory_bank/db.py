@@ -1,13 +1,14 @@
-"""Qdrant vector DB wrapper — embedded, no server required."""
+"""Qdrant vector DB wrapper — embedded, per-request locking."""
 from __future__ import annotations
 
 import hashlib
 import math
 import os
 import struct
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Generator
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
@@ -27,6 +28,10 @@ EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"   # fast, 384-dim, runs locally via f
 VECTOR_SIZE = 384
 
 DEFAULT_DB_PATH = Path.home() / ".memory-bank" / "qdrant"
+
+
+class DatabaseLockedError(Exception):
+    """Raised when the Qdrant storage directory is locked by another process."""
 
 
 def get_db_path() -> Path:
@@ -96,20 +101,50 @@ def _hash_embed(text: str, dim: int = VECTOR_SIZE) -> list[float]:
 
 
 class MemoryDB:
-    """Thin wrapper around an embedded Qdrant collection."""
+    """Thin wrapper around an embedded Qdrant collection.
+
+    The Qdrant client is opened and closed per operation via the ``_connect()``
+    context manager.  This allows multiple processes (e.g. the UI server and
+    CLI commands) to share the same storage directory without holding an
+    exclusive file lock for their entire lifetime.
+
+    The fastembed model (the slow part to load) is cached on the instance so
+    it only loads once.
+    """
 
     def __init__(self, path: Path | None = None):
         self.path = path or get_db_path()
         self.path.mkdir(parents=True, exist_ok=True)
-        self._client = QdrantClient(path=str(self.path))
         self._embedder = None   # loaded on first call to _embed()
         self._embedder_loaded = False
-        self._ensure_collection()
+        self._collections_verified = False
 
-    def _ensure_collection(self) -> None:
-        existing = {c.name for c in self._client.get_collections().collections}
+    @contextmanager
+    def _connect(self) -> Generator[QdrantClient, None, None]:
+        """Acquire the Qdrant client for the duration of an operation."""
+        try:
+            client = QdrantClient(path=str(self.path))
+        except RuntimeError as exc:
+            if "already accessed by another instance" in str(exc):
+                raise DatabaseLockedError(
+                    f"Database is locked by another process.\n"
+                    f"Storage path: {self.path}\n"
+                    f"If the UI server is running, stop it with 'memory-bank ui stop' or Ctrl+C,\n"
+                    f"or use the UI's built-in search at http://127.0.0.1:6333."
+                ) from exc
+            raise
+        try:
+            if not self._collections_verified:
+                self._ensure_collection(client)
+                self._collections_verified = True
+            yield client
+        finally:
+            client.close()
+
+    def _ensure_collection(self, client: QdrantClient) -> None:
+        existing = {c.name for c in client.get_collections().collections}
         if COLLECTION not in existing:
-            self._client.create_collection(
+            client.create_collection(
                 collection_name=COLLECTION,
                 vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
             )
@@ -125,12 +160,16 @@ class MemoryDB:
         if not messages:
             return 0, 0
 
-        existing_ids = self._existing_ids({m.id for m in messages})
+        # Check which IDs already exist (brief lock)
+        with self._connect() as client:
+            existing_ids = self._existing_ids(client, {m.id for m in messages})
+
         new_msgs = [m for m in messages if m.id not in existing_ids]
 
         if not new_msgs:
             return 0, len(messages)
 
+        # Embed outside the lock — this is the slow part
         texts = [m.content for m in new_msgs]
         vectors = self._embed(texts)
 
@@ -142,7 +181,11 @@ class MemoryDB:
             )
             for m, vec in zip(new_msgs, vectors)
         ]
-        self._client.upsert(collection_name=COLLECTION, points=points)
+
+        # Write points (brief lock)
+        with self._connect() as client:
+            client.upsert(collection_name=COLLECTION, points=points)
+
         return len(new_msgs), len(messages) - len(new_msgs)
 
     # ------------------------------------------------------------------
@@ -168,6 +211,7 @@ class MemoryDB:
         ISO strings so comparison is lexicographic — which works correctly as long
         as all timestamps share the same format (guaranteed by the ingestors).
         """
+        # Embed outside the lock
         query_vec = self._embed([query])[0]
         flt = self._build_filter(
             source=source, project=project, role=role, session_id=session_id
@@ -176,13 +220,15 @@ class MemoryDB:
         # When time filters are active, over-fetch to compensate for post-filtering.
         fetch_limit = limit * 8 if (since or before) else limit
 
-        response = self._client.query_points(
-            collection_name=COLLECTION,
-            query=query_vec,
-            query_filter=flt,
-            limit=fetch_limit,
-            with_payload=True,
-        )
+        with self._connect() as client:
+            response = client.query_points(
+                collection_name=COLLECTION,
+                query=query_vec,
+                query_filter=flt,
+                limit=fetch_limit,
+                with_payload=True,
+            )
+
         results = [{"score": r.score, **r.payload} for r in response.points]
 
         # Post-filter by timestamp (ISO string lexicographic comparison is correct
@@ -235,18 +281,19 @@ class MemoryDB:
             must=[FieldCondition(key="session_id", match=MatchValue(value=session_id))]
         )
         records: list[dict[str, Any]] = []
-        offset = None
-        while True:
-            batch, offset = self._client.scroll(
-                collection_name=COLLECTION,
-                scroll_filter=flt,
-                limit=500,
-                offset=offset,
-                with_payload=True,
-            )
-            records.extend(r.payload for r in batch)
-            if offset is None:
-                break
+        with self._connect() as client:
+            offset = None
+            while True:
+                batch, offset = client.scroll(
+                    collection_name=COLLECTION,
+                    scroll_filter=flt,
+                    limit=500,
+                    offset=offset,
+                    with_payload=True,
+                )
+                records.extend(r.payload for r in batch)
+                if offset is None:
+                    break
         records.sort(key=lambda r: r.get("timestamp", ""))
         return records
 
@@ -265,53 +312,54 @@ class MemoryDB:
         flt = self._build_filter(source=source, project=project)
 
         sessions: dict[str, dict[str, Any]] = {}
-        offset = None
-        while True:
-            batch, offset = self._client.scroll(
-                collection_name=COLLECTION,
-                scroll_filter=flt,
-                limit=1000,
-                offset=offset,
-                with_payload=[
-                    "session_id", "source", "project", "timestamp",
-                    "role", "content", "model", "git_branch",
-                ],
-            )
-            for r in batch:
-                p = r.payload
-                ts = p.get("timestamp", "")
-                # Apply time filters
-                if since and ts < since:
-                    continue
-                if before and ts > before:
-                    continue
-                sid = p.get("session_id", "")
-                if sid not in sessions:
-                    sessions[sid] = {
-                        "session_id": sid,
-                        "source": p.get("source", ""),
-                        "project": p.get("project", ""),
-                        "first_ts": ts,
-                        "last_ts": ts,
-                        "message_count": 0,
-                        "title": "",
-                        "model": "",
-                    }
-                s = sessions[sid]
-                s["message_count"] += 1
-                if ts < s["first_ts"]:
-                    s["first_ts"] = ts
-                if ts > s["last_ts"]:
-                    s["last_ts"] = ts
-                # Grab title from first user message
-                if not s["title"] and p.get("role") == "user":
-                    text = (p.get("content") or "").strip()
-                    s["title"] = text[:120] + ("..." if len(text) > 120 else "")
-                # Grab model from first message that has it
-                if not s["model"] and p.get("model"):
-                    s["model"] = p["model"]
-            if offset is None:
-                break
+        with self._connect() as client:
+            offset = None
+            while True:
+                batch, offset = client.scroll(
+                    collection_name=COLLECTION,
+                    scroll_filter=flt,
+                    limit=1000,
+                    offset=offset,
+                    with_payload=[
+                        "session_id", "source", "project", "timestamp",
+                        "role", "content", "model", "git_branch",
+                    ],
+                )
+                for r in batch:
+                    p = r.payload
+                    ts = p.get("timestamp", "")
+                    # Apply time filters
+                    if since and ts < since:
+                        continue
+                    if before and ts > before:
+                        continue
+                    sid = p.get("session_id", "")
+                    if sid not in sessions:
+                        sessions[sid] = {
+                            "session_id": sid,
+                            "source": p.get("source", ""),
+                            "project": p.get("project", ""),
+                            "first_ts": ts,
+                            "last_ts": ts,
+                            "message_count": 0,
+                            "title": "",
+                            "model": "",
+                        }
+                    s = sessions[sid]
+                    s["message_count"] += 1
+                    if ts < s["first_ts"]:
+                        s["first_ts"] = ts
+                    if ts > s["last_ts"]:
+                        s["last_ts"] = ts
+                    # Grab title from first user message
+                    if not s["title"] and p.get("role") == "user":
+                        text = (p.get("content") or "").strip()
+                        s["title"] = text[:120] + ("..." if len(text) > 120 else "")
+                    # Grab model from first message that has it
+                    if not s["model"] and p.get("model"):
+                        s["model"] = p["model"]
+                if offset is None:
+                    break
 
         result = sorted(sessions.values(), key=lambda s: s["last_ts"], reverse=True)
         if limit:
@@ -323,23 +371,24 @@ class MemoryDB:
     # ------------------------------------------------------------------
 
     def stats(self) -> dict[str, Any]:
-        count = self._client.count(COLLECTION).count
+        with self._connect() as client:
+            count = client.count(COLLECTION).count
 
-        # Count by source via scroll
-        source_counts: dict[str, int] = {}
-        offset = None
-        while True:
-            records, offset = self._client.scroll(
-                collection_name=COLLECTION,
-                limit=1000,
-                offset=offset,
-                with_payload=["source"],
-            )
-            for r in records:
-                src = r.payload.get("source", "unknown")
-                source_counts[src] = source_counts.get(src, 0) + 1
-            if offset is None:
-                break
+            # Count by source via scroll
+            source_counts: dict[str, int] = {}
+            offset = None
+            while True:
+                records, offset = client.scroll(
+                    collection_name=COLLECTION,
+                    limit=1000,
+                    offset=offset,
+                    with_payload=["source"],
+                )
+                for r in records:
+                    src = r.payload.get("source", "unknown")
+                    source_counts[src] = source_counts.get(src, 0) + 1
+                if offset is None:
+                    break
 
         embedding_status = "neural (BAAI/bge-small-en-v1.5)" if self._embedder else "hash-based fallback (offline)"
         return {
@@ -356,15 +405,16 @@ class MemoryDB:
 
     def delete_by_source(self, source: str) -> int:
         """Delete all messages from a given source. Returns count deleted."""
-        before = self._client.count(COLLECTION).count
-        self._client.delete(
-            collection_name=COLLECTION,
-            points_selector=Filter(
-                must=[FieldCondition(key="source", match=MatchValue(value=source))]
-            ),
-        )
-        after = self._client.count(COLLECTION).count
-        return before - after
+        with self._connect() as client:
+            before_count = client.count(COLLECTION).count
+            client.delete(
+                collection_name=COLLECTION,
+                points_selector=Filter(
+                    must=[FieldCondition(key="source", match=MatchValue(value=source))]
+                ),
+            )
+            after_count = client.count(COLLECTION).count
+        return before_count - after_count
 
     def delete_before(
         self,
@@ -382,32 +432,34 @@ class MemoryDB:
         flt = Filter(must=conditions) if conditions else None
 
         to_delete: list[int] = []
-        offset = None
-        while True:
-            batch, offset = self._client.scroll(
-                collection_name=COLLECTION,
-                scroll_filter=flt,
-                limit=1000,
-                offset=offset,
-                with_payload=["timestamp"],
-                with_vectors=False,
-            )
-            for r in batch:
-                ts = r.payload.get("timestamp", "")
-                if ts < timestamp_iso:
-                    to_delete.append(r.id)
-            if offset is None:
-                break
+        with self._connect() as client:
+            offset = None
+            while True:
+                batch, offset = client.scroll(
+                    collection_name=COLLECTION,
+                    scroll_filter=flt,
+                    limit=1000,
+                    offset=offset,
+                    with_payload=["timestamp"],
+                    with_vectors=False,
+                )
+                for r in batch:
+                    ts = r.payload.get("timestamp", "")
+                    if ts < timestamp_iso:
+                        to_delete.append(r.id)
+                if offset is None:
+                    break
 
         if not to_delete:
             return 0
 
         # Delete in batches of 1000
-        for i in range(0, len(to_delete), 1000):
-            self._client.delete(
-                collection_name=COLLECTION,
-                points_selector=to_delete[i : i + 1000],
-            )
+        with self._connect() as client:
+            for i in range(0, len(to_delete), 1000):
+                client.delete(
+                    collection_name=COLLECTION,
+                    points_selector=to_delete[i : i + 1000],
+                )
         return len(to_delete)
 
     # ------------------------------------------------------------------
@@ -430,9 +482,9 @@ class MemoryDB:
             return [vec.tolist() for vec in self._embedder.embed(texts)]
         return [_hash_embed(t) for t in texts]
 
-    def _existing_ids(self, ids: set[str]) -> set[str]:
+    def _existing_ids(self, client: QdrantClient, ids: set[str]) -> set[str]:
         uint_ids = [_id_to_uint(i) for i in ids]
-        results = self._client.retrieve(
+        results = client.retrieve(
             collection_name=COLLECTION,
             ids=uint_ids,
             with_payload=["id"],

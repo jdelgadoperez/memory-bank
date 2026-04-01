@@ -24,10 +24,13 @@ def stats(db):
     from rich.panel import Panel
     from rich.table import Table
 
-    from memory_bank.db import MemoryDB
+    from memory_bank.db import DatabaseLockedError, MemoryDB
 
     db_obj = MemoryDB(Path(db) if db else None)
-    s = db_obj.stats()
+    try:
+        s = db_obj.stats()
+    except DatabaseLockedError as exc:
+        raise click.ClickException(str(exc)) from exc
 
     info = Table.grid(padding=(0, 2))
     info.add_column(style="dim")
@@ -95,7 +98,7 @@ def delete(source, since, db, yes):
       memory-bank delete --since 30d
       memory-bank delete claude-code --since 90d
     """
-    from memory_bank.db import MemoryDB, parse_time_expr
+    from memory_bank.db import DatabaseLockedError, MemoryDB, parse_time_expr
 
     if not source and not since:
         raise click.UsageError("Provide SOURCE, --since, or both.")
@@ -115,17 +118,20 @@ def delete(source, since, db, yes):
 
     db_obj = MemoryDB(Path(db) if db else None)
 
-    if since:
-        n = db_obj.delete_before(since_iso, source=source)
-        console.print(
-            f"[bold green]Deleted[/bold green] [cyan]{n}[/cyan] messages "
-            f"older than [bold]{since}[/bold]"
-            + (f" from source '[bold]{source}[/bold]'" if source else "")
-            + "."
-        )
-    else:
-        n = db_obj.delete_by_source(source)
-        console.print(
-            f"[bold green]Deleted[/bold green] [cyan]{n}[/cyan] messages "
-            f"from source '[bold]{source}[/bold]'."
-        )
+    try:
+        if since:
+            n = db_obj.delete_before(since_iso, source=source)
+            console.print(
+                f"[bold green]Deleted[/bold green] [cyan]{n}[/cyan] messages "
+                f"older than [bold]{since}[/bold]"
+                + (f" from source '[bold]{source}[/bold]'" if source else "")
+                + "."
+            )
+        else:
+            n = db_obj.delete_by_source(source)
+            console.print(
+                f"[bold green]Deleted[/bold green] [cyan]{n}[/cyan] messages "
+                f"from source '[bold]{source}[/bold]'."
+            )
+    except DatabaseLockedError as exc:
+        raise click.ClickException(str(exc)) from exc

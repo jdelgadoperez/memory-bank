@@ -125,7 +125,46 @@ def cli(ctx):
 # ---------------------------------------------------------------------------
 
 
-def _run_ingest(ingestor, db_path: Path | None = None):
+PENDING_DIR = Path.home() / ".memory-bank" / "pending"
+
+
+def _write_pending_marker(source: str) -> None:
+    """Write a marker so the next successful ingest drains this source."""
+    PENDING_DIR.mkdir(parents=True, exist_ok=True)
+    (PENDING_DIR / source).touch()
+
+
+def _drain_pending_markers(db_path: Path | None = None) -> None:
+    """Re-run ingest for any sources that were queued by a previous lock collision."""
+    if not PENDING_DIR.exists():
+        return
+    markers = list(PENDING_DIR.iterdir())
+    if not markers:
+        return
+
+    from .ingestors.claude_code import ClaudeCodeIngestor
+
+    # Only auto-detectable sources can be drained (others require a path argument)
+    factories = {
+        "claude-code": ClaudeCodeIngestor,
+    }
+
+    for marker in markers:
+        source = marker.name
+        factory = factories.get(source)
+        if factory is None:
+            console.print(f"[dim]Skipping pending marker for unknown source: {source}[/dim]")
+            marker.unlink(missing_ok=True)
+            continue
+        console.print(f"[dim]Draining pending ingest for {source}…[/dim]")
+        # Run ingest with drain=False to prevent recursion
+        _run_ingest(factory(), db_path=db_path, _drain=False)
+        # Only remove marker after successful ingest
+        marker.unlink(missing_ok=True)
+
+
+def _run_ingest(ingestor, db_path: Path | None = None, _drain: bool = True):
+    from .db import DatabaseLockedError
     from .router import resolve_router
     from .schema import IngestResult
 
@@ -142,21 +181,29 @@ def _run_ingest(ingestor, db_path: Path | None = None):
     route_label = "via UI server" if type(router).__name__ == "HttpRouter" else "direct"
     console.print(f"[dim]Ingest mode: {route_label}[/dim]")
 
-    with console.status(f"[bold magenta]Ingesting [cyan]{source}[/cyan]…[/bold magenta]"):
-        batch: list = []
-        for msg in ingestor.iter_messages():
-            result.total_found += 1
-            batch.append(msg)
-            if len(batch) >= BATCH_SIZE:
+    try:
+        with console.status(f"[bold magenta]Ingesting [cyan]{source}[/cyan]…[/bold magenta]"):
+            batch: list = []
+            for msg in ingestor.iter_messages():
+                result.total_found += 1
+                batch.append(msg)
+                if len(batch) >= BATCH_SIZE:
+                    ins, skp = router.upsert(batch)
+                    result.inserted += ins
+                    result.skipped += skp
+                    batch = []
+
+            if batch:
                 ins, skp = router.upsert(batch)
                 result.inserted += ins
                 result.skipped += skp
-                batch = []
-
-        if batch:
-            ins, skp = router.upsert(batch)
-            result.inserted += ins
-            result.skipped += skp
+    except DatabaseLockedError:
+        _write_pending_marker(source)
+        console.print(
+            f"[yellow]DB is locked. Ingest for {source} queued — "
+            f"will run on next invocation.[/yellow]"
+        )
+        return result
 
     router.close()
 
@@ -166,6 +213,10 @@ def _run_ingest(ingestor, db_path: Path | None = None):
         f"[cyan]{result.inserted}[/cyan] inserted, "
         f"[dim]{result.skipped} already existed[/dim]"
     )
+
+    if _drain:
+        _drain_pending_markers(db_path=db_path)
+
     return result
 
 
