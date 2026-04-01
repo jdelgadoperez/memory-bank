@@ -143,7 +143,7 @@ def search(
     """
     import json as _json
 
-    from memory_bank.db import MemoryDB, parse_time_expr
+    from memory_bank.db import DatabaseLockedError, MemoryDB, parse_time_expr
     from rich.text import Text
 
     # Resolve --current-project
@@ -172,16 +172,19 @@ def search(
             snippet = 300
 
     db_obj = MemoryDB(Path(db) if db else None)
-    results = db_obj.search(
-        query=query,
-        limit=limit,
-        source=source,
-        project=project,
-        role=role,
-        session_id=session,
-        since=since_iso,
-        before=before_iso,
-    )
+    try:
+        results = db_obj.search(
+            query=query,
+            limit=limit,
+            source=source,
+            project=project,
+            role=role,
+            session_id=session,
+            since=since_iso,
+            before=before_iso,
+        )
+    except DatabaseLockedError as exc:
+        raise click.ClickException(str(exc)) from exc
 
     # Apply score filter
     if min_score > 0.0:
@@ -373,20 +376,23 @@ def sessions(source, project, since, before, limit, as_json, db):
     """
     import json as _json
 
-    from memory_bank.db import MemoryDB, parse_time_expr
+    from memory_bank.db import DatabaseLockedError, MemoryDB, parse_time_expr
     from rich.table import Table
 
     since_iso = parse_time_expr(since) if since else None
     before_iso = parse_time_expr(before) if before else None
 
     db_obj = MemoryDB(Path(db) if db else None)
-    result = db_obj.list_sessions(
-        source=source,
-        project=project,
-        since=since_iso,
-        before=before_iso,
-        limit=limit,
-    )
+    try:
+        result = db_obj.list_sessions(
+            source=source,
+            project=project,
+            since=since_iso,
+            before=before_iso,
+            limit=limit,
+        )
+    except DatabaseLockedError as exc:
+        raise click.ClickException(str(exc)) from exc
 
     if not result:
         if as_json:
@@ -456,11 +462,14 @@ def session_replay(session_id, as_json, db):
     """
     import json as _json
 
-    from memory_bank.db import MemoryDB
+    from memory_bank.db import DatabaseLockedError, MemoryDB
     from rich.rule import Rule
 
     db_obj = MemoryDB(Path(db) if db else None)
-    messages = db_obj.get_session(session_id)
+    try:
+        messages = db_obj.get_session(session_id)
+    except DatabaseLockedError as exc:
+        raise click.ClickException(str(exc)) from exc
 
     if not messages:
         console.print(f"[yellow]No messages found for session:[/yellow] {session_id}")

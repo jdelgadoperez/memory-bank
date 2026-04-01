@@ -456,7 +456,7 @@ def ui(ctx, port, no_browser, db):
     from http.server import BaseHTTPRequestHandler, HTTPServer
     from urllib.parse import parse_qs, urlparse
 
-    from memory_bank.db import MemoryDB, get_db_path
+    from memory_bank.db import DatabaseLockedError, MemoryDB, get_db_path
     from memory_bank.ui.daemon import _ui_url
 
     db_path = Path(db).expanduser() if db else get_db_path()
@@ -475,6 +475,15 @@ def ui(ctx, port, no_browser, db):
             self.wfile.write(body)
 
         def do_GET(self):
+            try:
+                self._handle_get()
+            except DatabaseLockedError:
+                self.send_json(
+                    {"error": "Database is temporarily locked by another process, try again"},
+                    503,
+                )
+
+        def _handle_get(self):
             parsed = urlparse(self.path)
             path = parsed.path
 
@@ -546,6 +555,15 @@ def ui(ctx, port, no_browser, db):
                 self.end_headers()
 
         def do_POST(self):
+            try:
+                self._handle_post()
+            except DatabaseLockedError:
+                self.send_json(
+                    {"error": "Database is temporarily locked by another process, try again"},
+                    503,
+                )
+
+        def _handle_post(self):
             parsed = urlparse(self.path)
             path = parsed.path
 
