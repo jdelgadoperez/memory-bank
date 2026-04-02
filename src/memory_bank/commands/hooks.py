@@ -98,8 +98,9 @@ def install(trigger, settings_path):
     in the background after each session ends.
 
     [bold]SessionStart hook[/bold]: at session start, searches the DB for past work
-    related to the current project and writes a brief summary to
-    [dim]~/.memory-bank/context.md[/dim].
+    related to the current project, writes a brief summary to
+    [dim]~/.memory-bank/context.md[/dim], and injects it into the project's
+    [dim]CLAUDE.md[/dim] so Claude Code picks it up automatically.
 
     Appends entries to settings.json. Existing hooks are preserved.
     Re-running is safe — already-installed hooks are skipped.
@@ -141,10 +142,41 @@ def install(trigger, settings_path):
         if trigger in ("start", "both"):
             console.print(
                 "\n[dim]SessionStart hook writes context to "
-                "[bold]~/.memory-bank/context.md[/bold].[/dim]"
+                "[bold]~/.memory-bank/context.md[/bold] and injects it into "
+                "the project's [bold]CLAUDE.md[/bold].[/dim]"
             )
     else:
         console.print("[dim]Nothing changed.[/dim]")
+
+
+def _inject_claude_md(project_root: Path, content: str) -> None:
+    """Inject or update the memory-bank section in the project's CLAUDE.md.
+
+    Uses HTML comment markers to fence the memory-bank block so the rest of
+    the file is preserved exactly.  Safe to call repeatedly — existing block
+    is replaced, new block is appended if not present.
+    """
+    import re
+
+    claude_md = project_root / "CLAUDE.md"
+    start_marker = "<!-- memory-bank:start -->"
+    end_marker = "<!-- memory-bank:end -->"
+    block = f"{start_marker}\n{content}\n{end_marker}\n"
+
+    if claude_md.exists():
+        existing = claude_md.read_text()
+        pattern = re.compile(
+            r"<!-- memory-bank:start -->.*?<!-- memory-bank:end -->\n?",
+            re.DOTALL,
+        )
+        if pattern.search(existing):
+            new_text = pattern.sub(block, existing)
+        else:
+            new_text = existing.rstrip("\n") + "\n\n" + block
+    else:
+        new_text = block
+
+    claude_md.write_text(new_text)
 
 
 @hooks.command("context-summary", context_settings=CONTEXT_SETTINGS, hidden=True)
@@ -161,7 +193,9 @@ def context_summary(db, limit):
     [Internal] Called by the SessionStart hook.
 
     Searches for recent work related to the current git project and writes
-    a Markdown summary to ~/.memory-bank/context.md.
+    a Markdown summary to ~/.memory-bank/context.md.  Also injects the
+    summary into the project's CLAUDE.md (fenced with HTML comment markers)
+    so Claude Code picks it up automatically.
     """
     import subprocess
     from memory_bank.db import MemoryDB
@@ -170,12 +204,14 @@ def context_summary(db, limit):
 
     # Detect current project from git
     project = None
+    project_root = None
     try:
         r = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
             capture_output=True, text=True, check=True,
         )
-        project = Path(r.stdout.strip()).name
+        project_root = Path(r.stdout.strip())
+        project = project_root.name
     except Exception:
         pass
 
@@ -210,11 +246,24 @@ def context_summary(db, limit):
             if len(r.get("content", "")) > 300:
                 snippet += "…"
             sid = r.get("session_id", "")
-            lines.append(f"**[{role}]** {date}  |  project: {proj}  |  session: `{sid[:16]}`")
+            cat = r.get("category", "")
+            meta = f"project: {proj}  |  session: `{sid[:16]}`"
+            if cat:
+                meta += f"  |  [{cat}]"
+            lines.append(f"**[{role}]** {date}  |  {meta}")
             lines.append(f"> {snippet}\n")
 
-    out_path.write_text("\n".join(lines))
+    summary_text = "\n".join(lines)
+    out_path.write_text(summary_text)
     console.print(f"[dim]Context summary written to {out_path}[/dim]")
+
+    # Also inject into project CLAUDE.md for automatic Claude Code pickup
+    if project_root:
+        try:
+            _inject_claude_md(project_root, summary_text)
+            console.print(f"[dim]Injected context into {project_root / 'CLAUDE.md'}[/dim]")
+        except Exception as exc:
+            console.print(f"[yellow]Warning:[/yellow] could not update CLAUDE.md: {exc}")
 
 
 @hooks.command(context_settings=CONTEXT_SETTINGS)
