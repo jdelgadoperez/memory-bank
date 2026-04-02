@@ -127,7 +127,7 @@ from memory_bank.cli import CONTEXT_SETTINGS, ROLE_STYLES, console, cli
 @click.option(
     "--category",
     default=None,
-    type=click.Choice(["bugfix", "feature", "refactor", "decision"]),
+    type=click.Choice(["bugfix", "feature", "refactor", "decision", "research"]),
     help="Only return assistant messages tagged with this category.",
 )
 def search(

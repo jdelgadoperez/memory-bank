@@ -39,6 +39,16 @@ _PATTERNS: list[tuple[str, list[str]]] = [
         r"\bdesign\s+decision\b",
         r"\barchitectur(e|al)\s+(decision|choice|approach)\b",
     ]),
+    ("research", [
+        r"\bexplor(e|ed|ing)\b",
+        r"\binvestigat(e|ed|ing)\b",
+        r"\banalyz(e|ed|ing)\b",
+        r"\bexamin(e|ed|ing)\b",
+        r"\baccording\s+to\s+(the\s+)?(docs?|documentation|spec|source|code)\b",
+        r"\b(the\s+)?(docs?|documentation|spec)\s+(say|says|shows?|indicates?|states?)\b",
+        r"\bhow\s+(it|this|they)\s+work(s)?\b",
+        r"\blook(ed|ing)\s+(at|into)\s+(the\s+)?(code|source|docs?|documentation|repo|codebase)\b",
+    ]),
 ]
 
 _compiled: list[tuple[str, list[re.Pattern]]] = [
@@ -52,7 +62,7 @@ def categorize(content: str) -> str | None:
     Classify message content into a category using keyword heuristics.
 
     Returns one of: ``"bugfix"``, ``"feature"``, ``"refactor"``,
-    ``"decision"``, or ``None`` if no pattern matches.
+    ``"decision"``, ``"research"``, or ``None`` if no pattern matches.
 
     Only intended for assistant messages — callers should filter by role.
     Categories are tried in order; first match wins.

@@ -82,7 +82,7 @@ def run_mcp_server(db: MemoryDB) -> None:
             since: Only return results after this time. Accepts "7d", "2025-01-01", etc.
             before: Only return results before this time. Same format as since.
             snippet: Truncate each result's text to N chars (default 300).
-            category: Filter by category — "bugfix", "feature", "refactor", or "decision".
+            category: Filter by category — "bugfix", "feature", "refactor", "decision", or "research".
         """
         import json
 
