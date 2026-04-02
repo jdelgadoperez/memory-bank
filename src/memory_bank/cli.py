@@ -56,6 +56,7 @@ click.rich_click.OPTION_GROUPS = {
             "options": [
                 "--source", "--project", "--role", "--session",
                 "--since", "--before", "--min-score", "--current-project",
+                "--category",
             ],
         },
         {
@@ -181,11 +182,17 @@ def _run_ingest(ingestor, db_path: Path | None = None, _drain: bool = True):
     route_label = "via UI server" if type(router).__name__ == "HttpRouter" else "direct"
     console.print(f"[dim]Ingest mode: {route_label}[/dim]")
 
+    from .categorizer import categorize
+
     try:
         with console.status(f"[bold magenta]Ingesting [cyan]{source}[/cyan]…[/bold magenta]"):
             batch: list = []
             for msg in ingestor.iter_messages():
                 result.total_found += 1
+                if msg.role == "assistant" and "category" not in msg.metadata:
+                    cat = categorize(msg.content)
+                    if cat:
+                        msg.metadata["category"] = cat
                 batch.append(msg)
                 if len(batch) >= BATCH_SIZE:
                     ins, skp = router.upsert(batch)

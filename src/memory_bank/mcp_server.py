@@ -62,6 +62,7 @@ def run_mcp_server(db: MemoryDB) -> None:
         since: str | None = None,
         before: str | None = None,
         snippet: int = _DEFAULT_SNIPPET,
+        category: str | None = None,
     ) -> str:
         """
         Semantic search over ingested Claude chat history.
@@ -81,6 +82,7 @@ def run_mcp_server(db: MemoryDB) -> None:
             since: Only return results after this time. Accepts "7d", "2025-01-01", etc.
             before: Only return results before this time. Same format as since.
             snippet: Truncate each result's text to N chars (default 300).
+            category: Filter by category — "bugfix", "feature", "refactor", "decision", or "research".
         """
         import json
 
@@ -96,6 +98,7 @@ def run_mcp_server(db: MemoryDB) -> None:
             session_id=session_id,
             since=since_iso,
             before=before_iso,
+            category=category,
         )
         results = [r for r in results if r.get("score", 0) >= min_score]
         return json.dumps([_compact_message(r, snippet) for r in results])

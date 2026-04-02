@@ -124,9 +124,15 @@ from memory_bank.cli import CONTEXT_SETTINGS, ROLE_STYLES, console, cli
         "keeps only the highest-scoring copy."
     ),
 )
+@click.option(
+    "--category",
+    default=None,
+    type=click.Choice(["bugfix", "feature", "refactor", "decision", "research"]),
+    help="Only return assistant messages tagged with this category.",
+)
 def search(
     query, limit, source, project, role, session, since, before, context_n,
-    current_project, db, as_json, agent, min_score, snippet, dedupe,
+    current_project, db, as_json, agent, min_score, snippet, dedupe, category,
 ):
     """Semantically search your ingested chat history.
 
@@ -182,6 +188,7 @@ def search(
             session_id=session,
             since=since_iso,
             before=before_iso,
+            category=category,
         )
     except DatabaseLockedError as exc:
         raise click.ClickException(str(exc)) from exc

@@ -202,6 +202,7 @@ class MemoryDB:
         session_id: str | None = None,
         since: str | None = None,
         before: str | None = None,
+        category: str | None = None,
     ) -> list[dict[str, Any]]:
         """
         Semantic search with optional metadata and time filters.
@@ -214,7 +215,8 @@ class MemoryDB:
         # Embed outside the lock
         query_vec = self._embed([query])[0]
         flt = self._build_filter(
-            source=source, project=project, role=role, session_id=session_id
+            source=source, project=project, role=role, session_id=session_id,
+            category=category,
         )
 
         # When time filters are active, over-fetch to compensate for post-filtering.
