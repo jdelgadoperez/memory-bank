@@ -34,6 +34,26 @@ STOP_HOOK_MARKER = "memory-bank ingest claude-code"
 START_HOOK_MARKER = "memory-bank hooks context-summary"
 PRECOMPACT_HOOK_MARKER = "memory-bank ingest claude-code"
 
+from memory_bank.commands._recall_guard import (  # noqa: E402
+    RECALL_HOOK_COMMAND,
+    RECALL_HOOK_MARKER,
+    RECALL_MIN_SCORE,
+    RECALL_LIMIT,
+    RECALL_SNIPPET_LENGTH,
+    SKIP_RECALL_PATTERNS,
+    should_skip_recall,
+)
+
+__all__ = [
+    "RECALL_HOOK_COMMAND",
+    "RECALL_HOOK_MARKER",
+    "RECALL_MIN_SCORE",
+    "RECALL_LIMIT",
+    "RECALL_SNIPPET_LENGTH",
+    "SKIP_RECALL_PATTERNS",
+    "should_skip_recall",
+]
+
 MCP_SERVER_NAME = "memory-bank"
 MCP_SERVER_CONFIG: dict[str, Any] = {
     "command": "memory-bank",
@@ -227,8 +247,6 @@ def _inject_claude_md(project_root: Path, content: str) -> None:
     the file is preserved exactly.  Safe to call repeatedly — existing block
     is replaced, new block is appended if not present.
     """
-    import re
-
     claude_md = project_root / "CLAUDE.md"
     start_marker = "<!-- memory-bank:start -->"
     end_marker = "<!-- memory-bank:end -->"
