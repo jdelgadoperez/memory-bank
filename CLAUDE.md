@@ -121,6 +121,10 @@ memory-bank ui status
 memory-bank ui dev                 # auto-reload on source changes
 memory-bank mcp
 
+memory-bank setup install [--skip-hooks] [--on stop|start|both]
+memory-bank setup uninstall
+memory-bank setup status
+
 memory-bank hooks install [--on stop|start|both]
 memory-bank hooks uninstall
 memory-bank hooks status
@@ -179,14 +183,19 @@ ANTHROPIC_API_KEY=sk-... python scripts/search_agent.py
 ANTHROPIC_API_KEY=sk-... python scripts/search_agent.py "What was that Docker fix I did?"
 ```
 
-## Claude Code skill
+## Claude Code integration
 
-The `memory-search` skill in `skills/memory-search/SKILL.md` teaches Claude to use
-`memory-bank search` during sessions. Install it by symlinking:
+Install skills and hooks in one step:
 
 ```bash
-ln -s /home/user/memory-bank/skills/memory-search ~/.claude/skills/memory-search
+memory-bank setup install          # symlinks skills + installs hooks
+memory-bank setup status           # check what's installed
+memory-bank setup uninstall        # remove everything
 ```
+
+Two skills are included:
+- **memory-search** — semantic search over past conversations
+- **memory-recall** — full session context retrieval and synthesis
 
 ## Project structure
 
@@ -201,6 +210,7 @@ src/memory_bank/
 │   ├── search.py          — search + sessions + session commands
 │   ├── manage.py          — stats + delete commands
 │   ├── hooks.py           — hooks install/uninstall/status
+│   ├── setup.py           — setup install/uninstall/status
 │   └── mcp.py             — mcp command
 ├── ui/
 │   ├── server.py          — HTML template + HTTP server + ui group command
@@ -216,5 +226,6 @@ scripts/
 └── search_agent.py        — Agentic search via Anthropic API
 
 skills/
-└── memory-search/SKILL.md — Claude Code skill
+├── memory-search/SKILL.md — semantic search skill
+└── memory-recall/SKILL.md — full session context retrieval skill
 ```

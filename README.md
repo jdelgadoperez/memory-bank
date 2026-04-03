@@ -322,15 +322,19 @@ python scripts/search_agent.py "What was that Docker fix I did last month?"
 
 ---
 
-## Claude Code skill
+## Claude Code integration
 
-Install the `memory-search` skill so Claude can search your history automatically during any session:
+Install skills and hooks in one step:
 
 ```bash
-ln -s /home/user/memory-bank/skills/memory-search ~/.claude/skills/memory-search
+memory-bank setup install          # symlinks skills + installs hooks
+memory-bank setup status           # check what's installed
+memory-bank setup uninstall        # remove everything
 ```
 
-Once installed, ask Claude mid-session: *"Search my chat history for X"* and it will call `memory-bank search` for you.
+Two skills are included:
+- **memory-search** — semantic search over past conversations. Ask Claude: *"Search my chat history for X"*
+- **memory-recall** — full session context retrieval. Ask Claude: *"What was our approach to X?"*
 
 ---
 
@@ -356,6 +360,7 @@ src/memory_bank/
 │   ├── search.py          search + sessions + session commands
 │   ├── manage.py          stats + delete commands
 │   ├── hooks.py           hooks install/uninstall/status
+│   ├── setup.py           setup install/uninstall/status
 │   └── mcp.py             mcp command
 ├── ui/
 │   ├── server.py          HTML template + HTTP server + ui group command
@@ -368,5 +373,6 @@ src/memory_bank/
 scripts/
 └── search_agent.py        Agentic search via Anthropic API
 skills/
-└── memory-search/SKILL.md Claude Code skill
+├── memory-search/SKILL.md Semantic search skill
+└── memory-recall/SKILL.md Full session context retrieval skill
 ```
