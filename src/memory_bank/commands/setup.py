@@ -6,17 +6,17 @@ from pathlib import Path
 
 import rich_click as click
 
-from memory_bank.cli import CONTEXT_SETTINGS, console, cli
+from memory_bank.cli import CONTEXT_SETTINGS, cli, console
 from memory_bank.commands.hooks import (
-    SETTINGS_PATH,
-    STOP_HOOK_COMMAND,
-    STOP_HOOK_MARKER,
-    START_CONTEXT_COMMAND,
-    START_HOOK_MARKER,
     PRECOMPACT_HOOK_COMMAND,
     PRECOMPACT_HOOK_MARKER,
     RECALL_HOOK_COMMAND,
     RECALL_HOOK_MARKER,
+    SETTINGS_PATH,
+    START_CONTEXT_COMMAND,
+    START_HOOK_MARKER,
+    STOP_HOOK_COMMAND,
+    STOP_HOOK_MARKER,
     hook_entry,
     install_mcp,
     is_installed,
@@ -26,7 +26,6 @@ from memory_bank.commands.hooks import (
     remove_mcp,
     save_settings,
 )
-
 
 _SKILLS_TARGET = Path("~/.claude/skills").expanduser()
 _MEMORY_BANK_SKILL_MARKER = "memory-bank/skills/"
