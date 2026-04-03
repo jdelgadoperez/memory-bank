@@ -15,6 +15,8 @@ from memory_bank.commands.hooks import (
     START_HOOK_MARKER,
     PRECOMPACT_HOOK_COMMAND,
     PRECOMPACT_HOOK_MARKER,
+    RECALL_HOOK_COMMAND,
+    RECALL_HOOK_MARKER,
     hook_entry,
     install_mcp,
     is_installed,
@@ -98,7 +100,7 @@ def setup():
 @click.option(
     "--on",
     "trigger",
-    type=click.Choice(["stop", "start", "precompact", "both", "all"]),
+    type=click.Choice(["stop", "start", "precompact", "recall", "both", "recommended", "all"]),
     default="stop",
     show_default=True,
     help="Which hook event to use (ignored with --skip-hooks).",
@@ -155,14 +157,20 @@ def install(skip_hooks: bool, trigger: str) -> None:
             "stop": [("Stop", STOP_HOOK_COMMAND, STOP_HOOK_MARKER)],
             "start": [("SessionStart", START_CONTEXT_COMMAND, START_HOOK_MARKER)],
             "precompact": [("PreCompact", PRECOMPACT_HOOK_COMMAND, PRECOMPACT_HOOK_MARKER)],
+            "recall": [("UserPromptSubmit", RECALL_HOOK_COMMAND, RECALL_HOOK_MARKER)],
             "both": [
                 ("Stop", STOP_HOOK_COMMAND, STOP_HOOK_MARKER),
                 ("SessionStart", START_CONTEXT_COMMAND, START_HOOK_MARKER),
+            ],
+            "recommended": [
+                ("Stop", STOP_HOOK_COMMAND, STOP_HOOK_MARKER),
+                ("UserPromptSubmit", RECALL_HOOK_COMMAND, RECALL_HOOK_MARKER),
             ],
             "all": [
                 ("Stop", STOP_HOOK_COMMAND, STOP_HOOK_MARKER),
                 ("SessionStart", START_CONTEXT_COMMAND, START_HOOK_MARKER),
                 ("PreCompact", PRECOMPACT_HOOK_COMMAND, PRECOMPACT_HOOK_MARKER),
+                ("UserPromptSubmit", RECALL_HOOK_COMMAND, RECALL_HOOK_MARKER),
             ],
         }
 
@@ -285,6 +293,7 @@ def status() -> None:
             ("Stop", STOP_HOOK_MARKER, "ingest"),
             ("SessionStart", START_HOOK_MARKER, "context-summary"),
             ("PreCompact", PRECOMPACT_HOOK_MARKER, "pre-compaction ingest"),
+            ("UserPromptSubmit", RECALL_HOOK_MARKER, "recall"),
         ]:
             if is_installed(settings, event, marker):
                 console.print(
