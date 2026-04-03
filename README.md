@@ -1,10 +1,8 @@
+![memory-bank](./docs/images/memory-bank.png)
+
 # memory-bank
 
 Local vector DB for ingesting and searching Claude chat histories. Ask "what did I work on last week?" and get real answers from your past sessions — no cloud, no server, everything runs on your machine.
-
-![memory-bank UI](./docs/images/memory-bank.png)
-
----
 
 ## Getting started
 
@@ -81,12 +79,12 @@ memory-bank stats
 
 All settings are controlled via environment variables. You can set them in your shell profile (`~/.zshrc`, `~/.bashrc`) or prefix individual commands.
 
-| Variable | Default | Description |
-|---|---|---|
-| `MEMORY_BANK_DB` | `~/.memory-bank/qdrant` | Where the vector DB is stored on disk |
-| `CLAUDE_PROJECTS_DIR` | `~/.claude/projects` | Path to Claude Code session logs |
-| `CLAUDE_DESKTOP_PATH` | `~/Library/Application Support/Claude` | Path to Claude Desktop app data |
-| `ANTHROPIC_API_KEY` | — | Required only for the interactive search agent |
+| Variable              | Default                                | Description                                    |
+| --------------------- | -------------------------------------- | ---------------------------------------------- |
+| `MEMORY_BANK_DB`      | `~/.memory-bank/qdrant`                | Where the vector DB is stored on disk          |
+| `CLAUDE_PROJECTS_DIR` | `~/.claude/projects`                   | Path to Claude Code session logs               |
+| `CLAUDE_DESKTOP_PATH` | `~/Library/Application Support/Claude` | Path to Claude Desktop app data                |
+| `ANTHROPIC_API_KEY`   | —                                      | Required only for the interactive search agent |
 
 ### Example: custom DB location
 
@@ -149,18 +147,18 @@ Runs `claude-code` automatically and `claude-desktop` if the default path is fou
 memory-bank search QUERY [options]
 ```
 
-| Option | Description |
-|---|---|
-| `--limit N` / `-n N` | Number of results (default: 10) |
-| `--source SOURCE` | Filter by source: `claude-code`, `claude-desktop`, or a custom name |
-| `--project PROJECT` | Filter by project name (matches the folder name under `~/.claude/projects/`) |
-| `--role user\|assistant` | Only return messages from one side of the conversation |
-| `--session SESSION_ID` | Filter to a specific session |
-| `--min-score FLOAT` | Discard results below this similarity score (0–1). Recommended: `0.5` in agent contexts |
-| `--json` | Output raw JSON (full fidelity, good for `jq` pipelines) |
-| `--agent` | Compact JSON for LLM consumption — drops `id`, date-only timestamps, 300-char snippets, defaults to limit=5 / min-score=0.5. ~60% fewer tokens than `--json` |
-| `--snippet N` | Truncate content to N characters in JSON/agent output |
-| `--db PATH` | Use an alternate DB path |
+| Option                   | Description                                                                                                                                                  |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--limit N` / `-n N`     | Number of results (default: 10)                                                                                                                              |
+| `--source SOURCE`        | Filter by source: `claude-code`, `claude-desktop`, or a custom name                                                                                          |
+| `--project PROJECT`      | Filter by project name (matches the folder name under `~/.claude/projects/`)                                                                                 |
+| `--role user\|assistant` | Only return messages from one side of the conversation                                                                                                       |
+| `--session SESSION_ID`   | Filter to a specific session                                                                                                                                 |
+| `--min-score FLOAT`      | Discard results below this similarity score (0–1). Recommended: `0.5` in agent contexts                                                                      |
+| `--json`                 | Output raw JSON (full fidelity, good for `jq` pipelines)                                                                                                     |
+| `--agent`                | Compact JSON for LLM consumption — drops `id`, date-only timestamps, 300-char snippets, defaults to limit=5 / min-score=0.5. ~60% fewer tokens than `--json` |
+| `--snippet N`            | Truncate content to N characters in JSON/agent output                                                                                                        |
+| `--db PATH`              | Use an alternate DB path                                                                                                                                     |
 
 #### Examples
 
@@ -202,11 +200,11 @@ memory-bank ui [-p PORT] [-B|--no-browser] [--db PATH]
 
 Launches a local web UI to browse and search your memory bank. When run without a subcommand it starts a foreground HTTP server and opens your browser.
 
-| Option | Description |
-|---|---|
-| `-p PORT` / `--port PORT` | Port to listen on (default: 6333) |
-| `-B` / `--no-browser` | Start the server without opening a browser tab |
-| `--db PATH` | Use an alternate DB path |
+| Option                    | Description                                    |
+| ------------------------- | ---------------------------------------------- |
+| `-p PORT` / `--port PORT` | Port to listen on (default: 6333)              |
+| `-B` / `--no-browser`     | Start the server without opening a browser tab |
+| `--db PATH`               | Use an alternate DB path                       |
 
 ```bash
 memory-bank ui                   # foreground server, opens browser
@@ -238,33 +236,39 @@ Requires the dev extras: `uv pip install -e '.[dev]'` (installs `watchfiles`). P
 
 ### Hooks
 
-Keep your DB current automatically by running ingest at the end of every Claude Code session:
+Keep your DB current automatically by hooking into Claude Code's session lifecycle:
 
 ```bash
 memory-bank hooks install              # adds a Stop hook (recommended)
-memory-bank hooks install --on start   # hook into SessionStart instead
-memory-bank hooks install --on both    # both events
+memory-bank hooks install --on recall  # injects past context into every prompt
+memory-bank hooks install --on recommended  # stop + recall
 memory-bank hooks status               # check what's installed
 memory-bank hooks uninstall            # remove all memory-bank hooks
 ```
 
-The hook runs `memory-bank ingest claude-code` in the background and appends output to `~/.memory-bank/ingest.log`. Your existing hooks in `~/.claude/settings.json` are preserved. Re-running `install` is safe — already-installed hooks are skipped.
+Hooks run in the background and append output to `~/.memory-bank/ingest.log`. Your existing hooks in `~/.claude/settings.json` are preserved. Re-running `install` is safe — already-installed hooks are skipped.
 
-| `--on` value | Trigger |
+| `--on` value    | Trigger |
 |---|---|
-| `stop` | After each session ends (default, recommended) |
-| `start` | When a new session begins |
-| `both` | Both events |
+| `stop`          | After each session ends (default, recommended) |
+| `start`         | When a new session begins |
+| `precompact`    | Before context compaction |
+| `recall`        | Before each prompt — injects relevant past context |
+| `both`          | stop + start |
+| `recommended`   | stop + recall |
+| `all`           | All hooks |
+
+The recall hook can be temporarily disabled by setting `MEMORY_BANK_RECALL=0` in your shell.
 
 ---
 
 ## Data sources
 
-| Source | What's ingested | Default path |
-|---|---|---|
-| `claude-code` | All Claude Code sessions (`*.jsonl`) | `~/.claude/projects/` |
+| Source           | What's ingested                       | Default path          |
+| ---------------- | ------------------------------------- | --------------------- |
+| `claude-code`    | All Claude Code sessions (`*.jsonl`)  | `~/.claude/projects/` |
 | `claude-desktop` | Exported Claude Desktop conversations | _(requires `--path`)_ |
-| Custom | Any JSON/JSONL via a mapper function | _(Python API only)_ |
+| Custom           | Any JSON/JSONL via a mapper function  | _(Python API only)_   |
 
 ---
 
@@ -335,8 +339,9 @@ memory-bank setup uninstall        # remove everything
 ```
 
 Two skills are included:
-- **memory-search** — semantic search over past conversations. Ask Claude: *"Search my chat history for X"*
-- **memory-recall** — full session context retrieval. Ask Claude: *"What was our approach to X?"*
+
+- **memory-search** — semantic search over past conversations. Ask Claude: _"Search my chat history for X"_
+- **memory-recall** — full session context retrieval. Ask Claude: _"What was our approach to X?"_
 
 ---
 
