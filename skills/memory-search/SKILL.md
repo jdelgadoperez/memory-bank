@@ -24,10 +24,11 @@ Before searching, verify the tool is installed:
 memory-bank stats
 ```
 
-If the command is not found, install it:
+If the command is not found, the user needs to install memory-bank:
 
 ```bash
-uv pip install -e /home/user/memory-bank
+uv pip install -e /path/to/memory-bank
+memory-bank setup install
 ```
 
 If the DB is empty (0 messages), ingest first:
