@@ -6,72 +6,40 @@ Local vector DB for ingesting and searching Claude chat histories. Ask "what did
 
 ## Getting started
 
-### Prerequisites
-
-- Python 3.11+
-- [`uv`](https://docs.astral.sh/uv/) (recommended) or pip
-
-### 1. Install
-
-Clone the repo, then install in editable mode:
+**Prerequisites:** Python 3.11+ and [`uv`](https://docs.astral.sh/uv/)
 
 ```bash
+# 1. Clone and install
 git clone <repo-url>
 cd memory-bank
-uv sync          # or: uv pip install -e .
+uv sync
+
+# 2. Wire up CLI, hooks, and Claude Code skills in one step
+memory-bank setup install
+
+# 3. Ingest your Claude Code history
+memory-bank ingest claude-code
+
+# 4. Search
+memory-bank search "authentication bug fix"
+memory-bank search "docker networking" --role assistant
+
+# 5. Check what's indexed
+memory-bank stats
 ```
 
-> **macOS note:** If `uv sync` fails with an `onnxruntime` platform error, the pinned version
-> in `pyproject.toml` (`onnxruntime<1.24`) should resolve this automatically. If you still hit
-> issues, try `pip install onnxruntime` separately to let pip pick a compatible wheel.
-
-The `memory-bank` command is now on your PATH inside the virtualenv. Activate it or prefix commands with `uv run`:
-
-```bash
-# Option A: activate venv
-source .venv/bin/activate
-
-# Option B: prefix every command
-uv run memory-bank stats
-```
-
-**Tip — add a shell alias** so `memory-bank` works from any directory without activating the venv. Point directly at the venv binary for instant startup (avoid `uv run` here — it re-resolves the environment on every call and adds ~10s overhead):
+**Optional:** Add a shell alias for convenience:
 
 ```bash
 alias memory-bank="/path/to/memory-bank/.venv/bin/memory-bank"
-alias mb="memory-bank"
+source ~/.zshrc   # reload your shell
 ```
 
-Replace `/path/to/memory-bank` with the actual clone location (e.g. `~/code/memory-bank`). Then reload your shell:
+Replace `/path/to/memory-bank` with your clone location (e.g., `~/code/memory-bank`).
 
-```bash
-source ~/.zshrc   # or ~/.bashrc
-```
+**Note:** On first ingest, `BAAI/bge-small-en-v1.5` embedding model (~25 MB) downloads once from HuggingFace and runs fully offline after.
 
-### 2. Ingest your Claude Code history
-
-Claude Code stores session logs in `~/.claude/projects/`. Ingest them all with:
-
-```bash
-memory-bank ingest claude-code
-```
-
-On first run this downloads the `BAAI/bge-small-en-v1.5` embedding model (~25 MB from HuggingFace). Subsequent runs are instant and skip already-indexed messages.
-
-### 3. Search
-
-```bash
-memory-bank search "authentication bug fix"
-memory-bank search "docker networking issue" --role assistant --limit 20
-```
-
-Results are shown in a formatted table with relevance scores. Run with `--json` to get raw output for scripting.
-
-### 4. Check what's indexed
-
-```bash
-memory-bank stats
-```
+> **macOS troubleshooting:** If `uv sync` fails with an `onnxruntime` error, try `pip install onnxruntime` separately to let pip pick a compatible wheel.
 
 ---
 
@@ -270,27 +238,26 @@ Requires the dev extras: `uv pip install -e '.[dev]'` (installs `watchfiles`). P
 
 ### Hooks
 
-Keep your DB current automatically by hooking into Claude Code's session lifecycle:
+Hooks are installed automatically by `memory-bank setup install` (recommended: `stop` + `recall`). To manage them separately:
 
 ```bash
-memory-bank hooks install              # adds a Stop hook (recommended)
-memory-bank hooks install --on recall  # injects past context into every prompt
-memory-bank hooks install --on recommended  # stop + recall
 memory-bank hooks status               # check what's installed
+memory-bank hooks install --on stop    # auto-ingest after each session
+memory-bank hooks install --on recall  # inject context into every prompt
 memory-bank hooks uninstall            # remove all memory-bank hooks
 ```
 
-Hooks run in the background and append output to `~/.memory-bank/ingest.log`. Your existing hooks in `~/.claude/settings.json` are preserved. Re-running `install` is safe — already-installed hooks are skipped.
+Hooks run in the background and log to `~/.memory-bank/ingest.log`. Re-running `install` is safe — already-installed hooks are skipped.
 
-| `--on` value    | What gets installed | What it does |
-|---|---|---|
-| `stop`          | Stop hook | Runs `memory-bank ingest claude-code` after each session ends. Output goes to `~/.memory-bank/ingest.log`. |
-| `start`         | SessionStart hook | At session start, searches your DB for relevant past work, writes a summary to `~/.memory-bank/context.md`, and injects that context into the project's `CLAUDE.md` (fenced with HTML comment markers for automatic Claude Code pickup). |
-| `precompact`    | PreCompact hook | Runs before context compaction — ensures the full transcript is captured in the DB before Claude Code prunes it. |
-| `recall`        | UserPromptSubmit hook | Before each prompt, searches your history and injects relevant past context into the conversation. Disable temporarily with `MEMORY_BANK_RECALL=0`. |
-| `both`          | Stop + SessionStart | Recommended if you want automatic ingest and session-start context summaries. |
-| `recommended`   | Stop + UserPromptSubmit | Recommended combo: auto-ingest after sessions + per-prompt recall. |
-| `all`           | All four hooks | Stop + SessionStart + PreCompact + UserPromptSubmit. |
+| `--on` value    | What it does |
+|---|---|
+| `stop` | Auto-ingest after each session ends |
+| `start` | At session start, search DB for relevant past work and inject into project's `CLAUDE.md` |
+| `precompact` | Ensure full transcript is captured before Claude Code prunes context |
+| `recall` | Before each prompt, search history and inject relevant context. Disable with `MEMORY_BANK_RECALL=0` |
+| `both` | Stop + SessionStart |
+| `recommended` | Stop + UserPromptSubmit (default from `setup install`) |
+| `all` | Stop + SessionStart + PreCompact + UserPromptSubmit |
 
 ---
 
@@ -360,20 +327,20 @@ python scripts/search_agent.py "What was that Docker fix I did last month?"
 
 ---
 
-## Claude Code integration
+## Claude Code skills
 
-Install skills and hooks in one step:
+Installed automatically by `memory-bank setup install`. Use these slash commands in Claude Code:
+
+- **/memory-search** — Find relevant past conversations. Try: _"Search my history for Docker networking"_
+- **/memory-recall** — Pull full session context. Try: _"What was our approach to that auth bug?"_
+
+To manage setup:
 
 ```bash
-memory-bank setup install          # symlinks skills + installs hooks
 memory-bank setup status           # check what's installed
-memory-bank setup uninstall        # remove everything
+memory-bank setup uninstall        # remove skills and hooks
+memory-bank setup install          # re-install from scratch
 ```
-
-Two skills are included:
-
-- **memory-search** — semantic search over past conversations. Ask Claude: _"Search my chat history for X"_
-- **memory-recall** — full session context retrieval. Ask Claude: _"What was our approach to X?"_
 
 ---
 
