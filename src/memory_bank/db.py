@@ -345,6 +345,7 @@ class MemoryDB:
                             "last_ts": ts,
                             "message_count": 0,
                             "title": "",
+                            "title_ts": "",
                             "model": "",
                         }
                     s = sessions[sid]
@@ -353,10 +354,12 @@ class MemoryDB:
                         s["first_ts"] = ts
                     if ts > s["last_ts"]:
                         s["last_ts"] = ts
-                    # Grab title from first user message
-                    if not s["title"] and p.get("role") == "user":
+                    # Grab title from chronologically first user message
+                    if p.get("role") == "user" and ts and (not s["title_ts"] or ts < s["title_ts"]):
                         text = (p.get("content") or "").strip()
-                        s["title"] = text[:120] + ("..." if len(text) > 120 else "")
+                        if text:
+                            s["title"] = text[:120] + ("..." if len(text) > 120 else "")
+                            s["title_ts"] = ts
                     # Grab model from first message that has it
                     if not s["model"] and p.get("model"):
                         s["model"] = p["model"]
@@ -366,6 +369,8 @@ class MemoryDB:
         result = sorted(sessions.values(), key=lambda s: s["last_ts"], reverse=True)
         if limit:
             result = result[:limit]
+        for s in result:
+            s.pop("title_ts", None)
         return result
 
     # ------------------------------------------------------------------
