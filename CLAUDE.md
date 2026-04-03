@@ -41,6 +41,7 @@ memory-bank stats
 | `CLAUDE_PROJECTS_DIR` | `~/.claude/projects` | Override Claude Code source path |
 | `CLAUDE_DESKTOP_PATH` | `~/Library/Application Support/Claude` | Override Claude Desktop source path |
 | `ANTHROPIC_API_KEY` | — | Required for the search agent script |
+| `MEMORY_BANK_RECALL` | — | Set to `0` to temporarily disable the recall (UserPromptSubmit) hook |
 
 ## Auto-ingest via hooks
 
@@ -63,17 +64,31 @@ memory-bank hooks status
 memory-bank hooks uninstall
 ```
 
-The **Stop hook** runs `memory-bank ingest claude-code` in the background after each session.
+The **Stop hook** runs `memory-bank ingest claude-code` in the background after each session ends. Output goes to `~/.memory-bank/ingest.log`.
 
-The **SessionStart hook** searches for past work and writes a context summary.
+The **SessionStart hook** searches the DB for relevant past work related to the current project, writes a summary to `~/.memory-bank/context.md`, and injects that context into the project's `CLAUDE.md` file (fenced with HTML comment markers) so Claude Code picks it up automatically at session start.
 
-The **Recall hook** (UserPromptSubmit) searches your history before each prompt and injects
-relevant past context into Claude's conversation. Disable temporarily with `MEMORY_BANK_RECALL=0`.
+The **PreCompact hook** runs `memory-bank ingest claude-code` before context compaction, ensuring the full transcript is captured in the vector DB before Claude Code prunes it.
+
+The **Recall hook** (UserPromptSubmit) searches your history before each prompt and injects relevant past context into Claude's conversation via stdout. Disable temporarily with `MEMORY_BANK_RECALL=0`.
+
+### Hook combinations (`--on`)
+
+| Value | What gets installed |
+|---|---|
+| `stop` | Stop hook only |
+| `start` | SessionStart hook only |
+| `recall` | UserPromptSubmit (recall) hook only |
+| `precompact` | PreCompact hook only |
+| `both` | Stop + SessionStart |
+| `recommended` | Stop + UserPromptSubmit |
+| `all` | Stop + SessionStart + PreCompact + UserPromptSubmit |
 
 ## MCP server
 
 Run memory-bank as a native MCP server so Claude can call `search_memory`,
-`get_session`, and `list_sessions` as tools without any shell-out or SKILL.md:
+`get_session`, and `list_sessions` as tools without any shell-out or SKILL.md.
+`search_memory` accepts an optional `category` parameter (bugfix, feature, refactor, decision, research) to filter results by message type.
 
 ```bash
 memory-bank mcp
@@ -104,8 +119,10 @@ memory-bank ingest custom          # show Python API usage for custom sources
 memory-bank search QUERY [--limit N] [--source SOURCE] [--project PROJECT]
                          [--role user|assistant] [--session ID]
                          [--since EXPR] [--before EXPR] [--context N]
-                         [--min-score FLOAT] [--current-project] [--dedupe]
+                         [--category CAT] [--min-score FLOAT]
+                         [--current-project] [--dedupe]
                          [--agent] [--snippet N] [--json]
+                         # --category values: bugfix, feature, refactor, decision, research
 
 memory-bank sessions [--source SOURCE] [--project PROJECT]
                      [--since EXPR] [--before EXPR] [--limit N] [--json]
