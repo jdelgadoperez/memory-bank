@@ -13,11 +13,16 @@ from memory_bank.commands.hooks import (
     STOP_HOOK_MARKER,
     START_CONTEXT_COMMAND,
     START_HOOK_MARKER,
+    PRECOMPACT_HOOK_COMMAND,
+    PRECOMPACT_HOOK_MARKER,
     hook_entry,
+    install_mcp,
     is_installed,
+    is_mcp_installed,
     load_settings,
-    save_settings,
     remove_hooks,
+    remove_mcp,
+    save_settings,
 )
 
 
@@ -88,27 +93,28 @@ def setup():
     "--skip-hooks",
     is_flag=True,
     default=False,
-    help="Only install skills, skip hook installation.",
+    help="Only install skills, skip hook and MCP installation.",
 )
 @click.option(
     "--on",
     "trigger",
-    type=click.Choice(["stop", "start", "both"]),
+    type=click.Choice(["stop", "start", "precompact", "both", "all"]),
     default="stop",
     show_default=True,
     help="Which hook event to use (ignored with --skip-hooks).",
 )
 def install(skip_hooks: bool, trigger: str) -> None:
-    """Install skills and hooks for Claude Code integration.
+    """Install skills, hooks, and MCP server for Claude Code integration.
 
-    Symlinks memory-bank skills into ~/.claude/skills/ and
-    installs auto-ingest hooks into ~/.claude/settings.json.
+    Symlinks memory-bank skills into ~/.claude/skills/, installs
+    auto-ingest hooks, and registers the MCP server in
+    ~/.claude/settings.json.
 
     \b
     Examples:
       memory-bank setup install
       memory-bank setup install --skip-hooks
-      memory-bank setup install --on both
+      memory-bank setup install --on all
     """
     if _repo_root() is None:
         raise click.ClickException(
@@ -139,22 +145,28 @@ def install(skip_hooks: bool, trigger: str) -> None:
             f"  [bold green]Installed:[/bold green] {name} → [dim]{skill_path}[/dim]"
         )
 
-    # Install hooks
+    # Install hooks and MCP
     if not skip_hooks:
+        settings = load_settings()
+        changed = False
+
         console.print("\n[bold]Hooks[/bold]")
         event_map: dict[str, list[tuple[str, str, str]]] = {
             "stop": [("Stop", STOP_HOOK_COMMAND, STOP_HOOK_MARKER)],
             "start": [("SessionStart", START_CONTEXT_COMMAND, START_HOOK_MARKER)],
+            "precompact": [("PreCompact", PRECOMPACT_HOOK_COMMAND, PRECOMPACT_HOOK_MARKER)],
             "both": [
                 ("Stop", STOP_HOOK_COMMAND, STOP_HOOK_MARKER),
                 ("SessionStart", START_CONTEXT_COMMAND, START_HOOK_MARKER),
             ],
+            "all": [
+                ("Stop", STOP_HOOK_COMMAND, STOP_HOOK_MARKER),
+                ("SessionStart", START_CONTEXT_COMMAND, START_HOOK_MARKER),
+                ("PreCompact", PRECOMPACT_HOOK_COMMAND, PRECOMPACT_HOOK_MARKER),
+            ],
         }
 
-        settings = load_settings()
         hooks_cfg = settings.setdefault("hooks", {})
-        installed_any = False
-
         for event, command, marker in event_map[trigger]:
             if is_installed(settings, event, marker):
                 console.print(f"  [dim]{event} hook — already installed[/dim]")
@@ -163,14 +175,23 @@ def install(skip_hooks: bool, trigger: str) -> None:
             console.print(
                 f"  [bold green]Installed:[/bold green] {event} hook → [dim]{command}[/dim]"
             )
-            installed_any = True
+            changed = True
 
-        if installed_any:
+        console.print("\n[bold]MCP Server[/bold]")
+        if install_mcp(settings):
+            console.print(
+                "  [bold green]Installed:[/bold green] memory-bank MCP server"
+            )
+            changed = True
+        else:
+            console.print("  [dim]memory-bank MCP server — already configured[/dim]")
+
+        if changed:
             save_settings(settings)
 
     console.print(
         "\n[bold green]Setup complete.[/bold green] "
-        "Skills and hooks are ready for your next Claude Code session."
+        "Skills, hooks, and MCP server are ready for your next Claude Code session."
     )
 
 
@@ -203,6 +224,9 @@ def uninstall() -> None:
     if not removed_skills:
         console.print("  [dim]No memory-bank skills found.[/dim]")
 
+    settings = load_settings()
+    settings_changed = False
+
     console.print("\n[bold]Hooks[/bold]")
     removed_events = remove_hooks()
     for event in removed_events:
@@ -210,7 +234,17 @@ def uninstall() -> None:
     if not removed_events:
         console.print("  [dim]No memory-bank hooks found.[/dim]")
 
-    if not removed_skills and not removed_events:
+    console.print("\n[bold]MCP Server[/bold]")
+    # Re-read settings since remove_hooks may have modified the file
+    settings = load_settings()
+    if remove_mcp(settings):
+        save_settings(settings)
+        console.print("  [bold green]Removed:[/bold green] memory-bank MCP server")
+        settings_changed = True
+    else:
+        console.print("  [dim]No memory-bank MCP server found.[/dim]")
+
+    if not removed_skills and not removed_events and not settings_changed:
         console.print("\n[dim]Nothing to remove.[/dim]")
 
 
@@ -250,6 +284,7 @@ def status() -> None:
         for event, marker, kind in [
             ("Stop", STOP_HOOK_MARKER, "ingest"),
             ("SessionStart", START_HOOK_MARKER, "context-summary"),
+            ("PreCompact", PRECOMPACT_HOOK_MARKER, "pre-compaction ingest"),
         ]:
             if is_installed(settings, event, marker):
                 console.print(
@@ -257,6 +292,12 @@ def status() -> None:
                 )
             else:
                 console.print(f"  [dim]✗ {event} ({kind}) — not installed[/dim]")
+
+        console.print("\n[bold]MCP Server[/bold]")
+        if is_mcp_installed(settings):
+            console.print("  [bold green]✓[/bold green] memory-bank")
+        else:
+            console.print("  [dim]✗ memory-bank — not configured[/dim]")
     else:
         console.print("  [dim]No settings.json found[/dim]")
 

@@ -25,8 +25,20 @@ START_CONTEXT_COMMAND = (
     " >> ~/.memory-bank/ingest.log 2>&1 &"
 )
 
+PRECOMPACT_HOOK_COMMAND = (
+    "memory-bank ingest claude-code"
+    " >> ~/.memory-bank/ingest.log 2>&1 &"
+)
+
 STOP_HOOK_MARKER = "memory-bank ingest claude-code"
 START_HOOK_MARKER = "memory-bank hooks context-summary"
+PRECOMPACT_HOOK_MARKER = "memory-bank ingest claude-code"
+
+MCP_SERVER_NAME = "memory-bank"
+MCP_SERVER_CONFIG: dict[str, Any] = {
+    "command": "memory-bank",
+    "args": ["mcp"],
+}
 
 
 def load_settings(path: Path | None = None) -> dict[str, Any]:
@@ -57,6 +69,29 @@ def is_installed(settings: dict[str, Any], hook_type: str, marker: str) -> bool:
     return False
 
 
+def is_mcp_installed(settings: dict[str, Any]) -> bool:
+    return MCP_SERVER_NAME in settings.get("mcpServers", {})
+
+
+def install_mcp(settings: dict[str, Any]) -> bool:
+    """Add memory-bank MCP server to settings. Returns True if added."""
+    if is_mcp_installed(settings):
+        return False
+    settings.setdefault("mcpServers", {})[MCP_SERVER_NAME] = MCP_SERVER_CONFIG.copy()
+    return True
+
+
+def remove_mcp(settings: dict[str, Any]) -> bool:
+    """Remove memory-bank MCP server from settings. Returns True if removed."""
+    servers = settings.get("mcpServers", {})
+    if MCP_SERVER_NAME in servers:
+        del servers[MCP_SERVER_NAME]
+        if not servers:
+            del settings["mcpServers"]
+        return True
+    return False
+
+
 def remove_hooks(path: Path | None = None) -> list[str]:
     """Remove all memory-bank hooks from settings. Returns list of removed event names."""
     p = path or SETTINGS_PATH
@@ -66,7 +101,7 @@ def remove_hooks(path: Path | None = None) -> list[str]:
     settings = json.loads(p.read_text())
     removed: list[str] = []
 
-    all_markers = (STOP_HOOK_MARKER, START_HOOK_MARKER)
+    all_markers = (STOP_HOOK_MARKER, START_HOOK_MARKER, PRECOMPACT_HOOK_MARKER)
     for event in list(settings.get("hooks", {}).keys()):
         before = settings["hooks"][event]
         after = [
@@ -110,14 +145,16 @@ def hooks():
 @click.option(
     "--on",
     "trigger",
-    type=click.Choice(["stop", "start", "both"]),
+    type=click.Choice(["stop", "start", "precompact", "both", "all"]),
     default="stop",
     show_default=True,
     help=(
         "Which Claude Code hook event to attach to.\n\n"
-        "stop  = after each session ends — runs ingest (recommended)\n"
-        "start = when a new session begins — writes a context summary\n"
-        "both  = both events"
+        "stop       = after each session ends — runs ingest (recommended)\n"
+        "start      = when a new session begins — writes a context summary\n"
+        "precompact = before context compaction — captures full transcript\n"
+        "both       = stop + start\n"
+        "all        = stop + start + precompact"
     ),
 )
 @click.option(
@@ -153,10 +190,12 @@ def install(trigger, settings_path):
     hooks_cfg = settings.setdefault("hooks", {})
 
     plan = []
-    if trigger in ("stop", "both"):
+    if trigger in ("stop", "both", "all"):
         plan.append(("Stop", STOP_HOOK_COMMAND, STOP_HOOK_MARKER))
-    if trigger in ("start", "both"):
+    if trigger in ("start", "both", "all"):
         plan.append(("SessionStart", START_CONTEXT_COMMAND, START_HOOK_MARKER))
+    if trigger in ("precompact", "all"):
+        plan.append(("PreCompact", PRECOMPACT_HOOK_COMMAND, PRECOMPACT_HOOK_MARKER))
 
     installed_any = False
     for event, command, marker in plan:
@@ -344,6 +383,7 @@ def status(settings_path):
     checks = [
         ("Stop", STOP_HOOK_MARKER, "ingest"),
         ("SessionStart", START_HOOK_MARKER, "context-summary"),
+        ("PreCompact", PRECOMPACT_HOOK_MARKER, "pre-compaction ingest"),
     ]
     for event, marker, kind in checks:
         if is_installed(settings, event, marker):
