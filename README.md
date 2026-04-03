@@ -85,6 +85,7 @@ All settings are controlled via environment variables. You can set them in your 
 | `CLAUDE_PROJECTS_DIR` | `~/.claude/projects`                   | Path to Claude Code session logs               |
 | `CLAUDE_DESKTOP_PATH` | `~/Library/Application Support/Claude` | Path to Claude Desktop app data                |
 | `ANTHROPIC_API_KEY`   | —                                      | Required only for the interactive search agent |
+| `MEMORY_BANK_RECALL`  | —                                      | Set to `0` to temporarily disable the recall (UserPromptSubmit) hook |
 
 ### Example: custom DB location
 
@@ -152,8 +153,14 @@ memory-bank search QUERY [options]
 | `--limit N` / `-n N`     | Number of results (default: 10)                                                                                                                              |
 | `--source SOURCE`        | Filter by source: `claude-code`, `claude-desktop`, or a custom name                                                                                          |
 | `--project PROJECT`      | Filter by project name (matches the folder name under `~/.claude/projects/`)                                                                                 |
+| `--current-project`      | Auto-set `--project` to the current working directory name                                                                                                   |
 | `--role user\|assistant` | Only return messages from one side of the conversation                                                                                                       |
 | `--session SESSION_ID`   | Filter to a specific session                                                                                                                                 |
+| `--since EXPR`           | Only return messages newer than this time (e.g. `7d`, `2w`, `2025-01-01`)                                                                                   |
+| `--before EXPR`          | Only return messages older than this time                                                                                                                    |
+| `--context N`            | Include N surrounding messages before/after each result (from the same session)                                                                              |
+| `--category CAT`         | Filter by message category: `bugfix`, `feature`, `refactor`, `decision`, `research`                                                                          |
+| `--dedupe`               | Remove duplicate results, keeping the highest-scoring copy when the same content appears across multiple sessions                                             |
 | `--min-score FLOAT`      | Discard results below this similarity score (0–1). Recommended: `0.5` in agent contexts                                                                      |
 | `--json`                 | Output raw JSON (full fidelity, good for `jq` pipelines)                                                                                                     |
 | `--agent`                | Compact JSON for LLM consumption — drops `id`, date-only timestamps, 300-char snippets, defaults to limit=5 / min-score=0.5. ~60% fewer tokens than `--json` |
@@ -174,6 +181,15 @@ memory-bank search "deployment pipeline" --limit 5 --json --snippet 400
 
 # Filter out low-quality hits
 memory-bank search "kubernetes config" --source claude-code --min-score 0.5
+
+# Filter by category
+memory-bank search "authentication" --agent --category bugfix
+
+# Include surrounding context to understand if a result was the solution or a dead-end
+memory-bank search "docker fix" --agent --context 2
+
+# Search current project, dedup repeated conversations
+memory-bank search "refactor" --current-project --dedupe --agent
 ```
 
 ### Stats
@@ -187,10 +203,28 @@ Shows total message count broken down by source, the DB path, and which embeddin
 ### Delete
 
 ```bash
-memory-bank delete SOURCE
+memory-bank delete [SOURCE] [--since EXPR] [--yes]
 ```
 
-Deletes all messages from the named source after a confirmation prompt. Cannot be undone.
+Deletes ingested messages by source, age, or both. Either `SOURCE` or `--since` (or both) must be provided. Cannot be undone.
+
+| Option          | Description                                                              |
+| --------------- | ------------------------------------------------------------------------ |
+| `SOURCE`        | Delete all messages from this source (e.g. `claude-code`). Run `memory-bank stats` to see available source names. |
+| `--since EXPR`  | Delete messages **older than** this time (e.g. `90d`, `2025-01-01`). Use this to prune old data without wiping a whole source. |
+| `--yes` / `-y`  | Skip the confirmation prompt — useful for scripting.                     |
+| `--db PATH`     | Use an alternate DB path.                                                |
+
+```bash
+# Delete all messages from claude-desktop
+memory-bank delete claude-desktop
+
+# Prune messages older than 90 days (across all sources)
+memory-bank delete --since 90d
+
+# Prune old messages from a specific source, no confirmation
+memory-bank delete claude-code --since 90d --yes
+```
 
 ### UI
 
@@ -248,17 +282,15 @@ memory-bank hooks uninstall            # remove all memory-bank hooks
 
 Hooks run in the background and append output to `~/.memory-bank/ingest.log`. Your existing hooks in `~/.claude/settings.json` are preserved. Re-running `install` is safe — already-installed hooks are skipped.
 
-| `--on` value    | Trigger |
-|---|---|
-| `stop`          | After each session ends (default, recommended) |
-| `start`         | When a new session begins |
-| `precompact`    | Before context compaction |
-| `recall`        | Before each prompt — injects relevant past context |
-| `both`          | stop + start |
-| `recommended`   | stop + recall |
-| `all`           | All hooks |
-
-The recall hook can be temporarily disabled by setting `MEMORY_BANK_RECALL=0` in your shell.
+| `--on` value    | What gets installed | What it does |
+|---|---|---|
+| `stop`          | Stop hook | Runs `memory-bank ingest claude-code` after each session ends. Output goes to `~/.memory-bank/ingest.log`. |
+| `start`         | SessionStart hook | At session start, searches your DB for relevant past work, writes a summary to `~/.memory-bank/context.md`, and injects that context into the project's `CLAUDE.md` (fenced with HTML comment markers for automatic Claude Code pickup). |
+| `precompact`    | PreCompact hook | Runs before context compaction — ensures the full transcript is captured in the DB before Claude Code prunes it. |
+| `recall`        | UserPromptSubmit hook | Before each prompt, searches your history and injects relevant past context into the conversation. Disable temporarily with `MEMORY_BANK_RECALL=0`. |
+| `both`          | Stop + SessionStart | Recommended if you want automatic ingest and session-start context summaries. |
+| `recommended`   | Stop + UserPromptSubmit | Recommended combo: auto-ingest after sessions + per-prompt recall. |
+| `all`           | All four hooks | Stop + SessionStart + PreCompact + UserPromptSubmit. |
 
 ---
 
