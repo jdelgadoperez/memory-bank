@@ -8,6 +8,22 @@ Local vector DB for ingesting and searching Claude chat histories. Ask "what did
 
 **Prerequisites:** Python 3.11+ and [`uv`](https://docs.astral.sh/uv/)
 
+**Option 1 — one-step installer (recommended)**
+
+```bash
+# Clone, install, wire hooks, and run first ingest in one shot
+bash <(curl -fsSL https://raw.githubusercontent.com/jdelgadoperez/memory-bank/main/install.sh)
+```
+
+Or clone first and run locally:
+
+```bash
+git clone https://github.com/jdelgadoperez/memory-bank
+bash memory-bank/install.sh
+```
+
+**Option 2 — manual setup**
+
 ```bash
 # 1. Clone and install
 git clone <repo-url>
@@ -327,12 +343,22 @@ python scripts/search_agent.py "What was that Docker fix I did last month?"
 
 ---
 
-## Claude Code skills
+## Claude Code integration
 
-Installed automatically by `memory-bank setup install`. Use these slash commands in Claude Code:
+### Claude Code plugin (zero-config)
+
+The repo ships a `.claude-plugin/plugin.json` manifest. When the repo is open in Claude Code the plugin is auto-discovered — MCP tools, skills, and hooks are all registered without running `setup install`.
+
+### Skills
+
+Installed automatically by `memory-bank setup install` (or via the plugin). Use these slash commands in Claude Code:
 
 - **/memory-search** — Find relevant past conversations. Try: _"Search my history for Docker networking"_
 - **/memory-recall** — Pull full session context. Try: _"What was our approach to that auth bug?"_
+
+### MCP server
+
+The repo includes `.mcp.json` for project-level auto-discovery. To register globally, `setup install` adds the server to `~/.claude/settings.json`. MCP tools available in every session: `search_memory`, `list_sessions`, `get_session`.
 
 To manage setup:
 
@@ -341,6 +367,8 @@ memory-bank setup status           # check what's installed
 memory-bank setup uninstall        # remove skills and hooks
 memory-bank setup install          # re-install from scratch
 ```
+
+After running `setup install`, the CLI prints next steps: ingest your history, open the UI, and start using MCP tools in your next session.
 
 ---
 
@@ -384,4 +412,10 @@ scripts/
 skills/
 ├── memory-search/SKILL.md Semantic search skill
 └── memory-recall/SKILL.md Full session context retrieval skill
+.claude-plugin/
+└── plugin.json            Claude Code plugin manifest (auto-discovery)
+hooks/
+└── hooks.json             Hook definitions used by the plugin manifest
+.mcp.json                  Project-level MCP server config (Claude Code / Claude Desktop)
+install.sh                 One-step installer script
 ```

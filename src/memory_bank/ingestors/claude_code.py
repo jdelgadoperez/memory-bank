@@ -164,7 +164,7 @@ def _decode_project_path(encoded: str) -> str:
     contain dashes (e.g. 'memory-bank'), which would otherwise be split
     into path segments.
     """
-    parts = encoded.lstrip("-").split("-")
+    parts = encoded.lstrip("-").split("-")  # leading dash encodes root /; rest are path components
     current = Path("/")
     i = 0
     while i < len(parts):

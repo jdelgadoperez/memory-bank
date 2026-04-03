@@ -4,13 +4,28 @@ Local vector DB for ingesting and searching AI chat histories (Claude Code, Clau
 
 ## Setup
 
+**One-step installer (recommended)**
+
+```bash
+bash install.sh
+```
+
+Clones the repo, runs `uv sync`, wires hooks and MCP server, and runs an initial ingest.
+
+**Manual setup**
+
 ```bash
 uv pip install -e .
 # Optional: MCP server support
 uv pip install -e ".[mcp]"
+memory-bank setup install   # symlinks skills, installs hooks, registers MCP server
 ```
 
 The `memory-bank` CLI is now available. The Qdrant DB is stored at `~/.memory-bank/qdrant/` by default.
+
+**Claude Code plugin (zero-config)**
+
+The repo ships a `.claude-plugin/plugin.json` manifest. When the repo is open in Claude Code the plugin is auto-discovered — no `setup install` required. The manifest wires `skills/`, `hooks/hooks.json`, and `.mcp.json` automatically.
 
 ## Quick start
 
@@ -70,7 +85,7 @@ The **SessionStart hook** searches the DB for relevant past work related to the 
 
 The **PreCompact hook** runs `memory-bank ingest claude-code` before context compaction, ensuring the full transcript is captured in the vector DB before Claude Code prunes it.
 
-The **Recall hook** (UserPromptSubmit) searches your history before each prompt and injects relevant past context into Claude's conversation via stdout. Disable temporarily with `MEMORY_BANK_RECALL=0`.
+The **Recall hook** (UserPromptSubmit) searches your history before each prompt and injects relevant past context into Claude's conversation via stdout. Only errors are written to `~/.memory-bank/ingest.log` (stderr redirect); the hook's stdout is passed through to Claude unmodified. Disable temporarily with `MEMORY_BANK_RECALL=0`.
 
 ### Hook combinations (`--on`)
 
@@ -94,7 +109,7 @@ Run memory-bank as a native MCP server so Claude can call `search_memory`,
 memory-bank mcp
 ```
 
-Add to `claude_desktop_config.json` (Claude Desktop) or Claude Code `settings.json`:
+The repo includes a project-level `.mcp.json` that Claude Code and Claude Desktop can pick up automatically. To register globally, add to `claude_desktop_config.json` (Claude Desktop) or Claude Code `settings.json` (done automatically by `setup install`):
 
 ```json
 {

@@ -400,9 +400,11 @@ function onFilterChange(){
 }
 ['f-source','f-limit','f-role'].forEach(id=>document.getElementById(id).addEventListener('change',onFilterChange));
 ['f-date-from','f-date-to'].forEach(id=>document.getElementById(id).addEventListener('change',onFilterChange));
+// Debounce project input to avoid excessive API calls while the user types
 let projectDebounce;
 document.getElementById('f-project').addEventListener('input',()=>{clearTimeout(projectDebounce);projectDebounce=setTimeout(onFilterChange,400);});
 
+// Reset all filter fields to defaults and reload the current tab
 function resetFilters(){
   document.getElementById('f-source').value='';
   document.getElementById('f-role').value='';
