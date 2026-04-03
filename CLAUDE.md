@@ -50,11 +50,11 @@ Keep your DB current automatically by hooking into Claude Code's session lifecyc
 # Install a Stop hook (runs ingest after each session — recommended)
 memory-bank hooks install
 
-# Install a SessionStart hook (writes a context summary at session start)
-memory-bank hooks install --on start
+# Install a recall hook (injects past context into every prompt)
+memory-bank hooks install --on recall
 
-# Or both
-memory-bank hooks install --on both
+# Install both stop + recall (recommended combo)
+memory-bank hooks install --on recommended
 
 # Check what's installed
 memory-bank hooks status
@@ -63,11 +63,12 @@ memory-bank hooks status
 memory-bank hooks uninstall
 ```
 
-The Stop hook runs `memory-bank ingest claude-code` in the background and appends
-output to `~/.memory-bank/ingest.log`.
+The **Stop hook** runs `memory-bank ingest claude-code` in the background after each session.
 
-The SessionStart hook searches for past work related to the current git project
-and writes a brief summary to `~/.memory-bank/context.md`.
+The **SessionStart hook** searches for past work and writes a context summary.
+
+The **Recall hook** (UserPromptSubmit) searches your history before each prompt and injects
+relevant past context into Claude's conversation. Disable temporarily with `MEMORY_BANK_RECALL=0`.
 
 ## MCP server
 
@@ -121,11 +122,11 @@ memory-bank ui status
 memory-bank ui dev                 # auto-reload on source changes
 memory-bank mcp
 
-memory-bank setup install [--skip-hooks] [--on stop|start|both]
+memory-bank setup install [--skip-hooks] [--on stop|start|precompact|recall|both|recommended|all]
 memory-bank setup uninstall
 memory-bank setup status
 
-memory-bank hooks install [--on stop|start|both]
+memory-bank hooks install [--on stop|start|precompact|recall|both|recommended|all]
 memory-bank hooks uninstall
 memory-bank hooks status
 ```
