@@ -1,6 +1,7 @@
 ---
 name: memory-search
 description: Search past Claude chat history using the memory-bank vector DB. Use when the user asks about previous conversations, past solutions, or wants to find something discussed in an earlier session.
+allowed-tools: Bash, Read
 ---
 
 # Memory Bank Search Skill
@@ -16,7 +17,7 @@ Trigger this skill when the user asks things like:
 - "What have I worked on related to X?"
 - "Search my chat history for..."
 
-## Setup check
+## Prerequisites
 
 Before searching, verify the tool is installed:
 

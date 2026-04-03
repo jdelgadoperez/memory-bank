@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 
@@ -21,28 +22,49 @@ from memory_bank.commands.hooks import (
 
 
 _SKILLS_TARGET = Path("~/.claude/skills").expanduser()
+_MEMORY_BANK_SKILL_MARKER = "memory-bank/skills/"
 
 
-def _repo_root() -> Path:
-    """Resolve the memory-bank repo root from this file's location."""
+def _repo_root() -> Path | None:
+    """Resolve the memory-bank repo root from this file's location.
+
+    Returns None if the skills/ directory is not found (e.g. non-editable install).
+    """
     # commands/ -> memory_bank/ -> src/ -> repo root
     root = Path(__file__).resolve().parent.parent.parent.parent
     if not (root / "skills").is_dir():
-        raise click.ClickException(
-            f"Cannot find skills/ directory at {root}. "
-            "memory-bank must be installed in editable mode (uv pip install -e .)."
-        )
+        return None
     return root
 
 
 def _available_skills() -> list[tuple[str, Path]]:
     """Return (name, path) pairs for all skills in the repo."""
-    skills_dir = _repo_root() / "skills"
+    root = _repo_root()
+    if root is None:
+        return []
+    skills_dir = root / "skills"
     return [
         (d.name, d)
         for d in sorted(skills_dir.iterdir())
         if d.is_dir() and (d / "SKILL.md").exists()
     ]
+
+
+def _installed_memory_bank_skills() -> list[tuple[str, Path]]:
+    """Find memory-bank skill symlinks in ~/.claude/skills/, even if repo has moved.
+
+    Detects symlinks whose target path contains 'memory-bank/skills/'.
+    """
+    if not _SKILLS_TARGET.is_dir():
+        return []
+    results: list[tuple[str, Path]] = []
+    for entry in sorted(_SKILLS_TARGET.iterdir()):
+        if not entry.is_symlink():
+            continue
+        target = Path(os.readlink(entry))
+        if _MEMORY_BANK_SKILL_MARKER in str(target):
+            results.append((entry.name, entry))
+    return results
 
 
 @cli.group(context_settings=CONTEXT_SETTINGS)
@@ -88,6 +110,11 @@ def install(skip_hooks: bool, trigger: str) -> None:
       memory-bank setup install --skip-hooks
       memory-bank setup install --on both
     """
+    if _repo_root() is None:
+        raise click.ClickException(
+            "Cannot find skills/ directory. "
+            "memory-bank must be installed in editable mode (uv pip install -e .)."
+        )
     skills = _available_skills()
 
     # Install skills
@@ -154,14 +181,22 @@ def uninstall() -> None:
     Removes skill symlinks from ~/.claude/skills/ and
     auto-ingest hooks from ~/.claude/settings.json.
     """
+    # Try exact match first, fall back to pattern detection for moved repos
     skills = _available_skills()
     removed_skills = False
 
     console.print("[bold]Skills[/bold]")
-    for name, skill_path in skills:
-        target = _SKILLS_TARGET / name
-        if target.is_symlink() and target.resolve() == skill_path.resolve():
-            target.unlink()
+    if skills:
+        for name, skill_path in skills:
+            target = _SKILLS_TARGET / name
+            if target.is_symlink() and target.resolve() == skill_path.resolve():
+                target.unlink()
+                console.print(f"  [bold green]Removed:[/bold green] {name}")
+                removed_skills = True
+    else:
+        # Repo not found or non-editable — detect by symlink target pattern
+        for name, symlink in _installed_memory_bank_skills():
+            symlink.unlink()
             console.print(f"  [bold green]Removed:[/bold green] {name}")
             removed_skills = True
 
@@ -169,11 +204,13 @@ def uninstall() -> None:
         console.print("  [dim]No memory-bank skills found.[/dim]")
 
     console.print("\n[bold]Hooks[/bold]")
-    removed_hooks = remove_hooks()
-    if not removed_hooks:
+    removed_events = remove_hooks()
+    for event in removed_events:
+        console.print(f"  [bold green]Removed:[/bold green] {event} hook")
+    if not removed_events:
         console.print("  [dim]No memory-bank hooks found.[/dim]")
 
-    if not removed_skills and not removed_hooks:
+    if not removed_skills and not removed_events:
         console.print("\n[dim]Nothing to remove.[/dim]")
 
 
@@ -186,14 +223,26 @@ def status() -> None:
     skills = _available_skills()
 
     console.print("[bold]Skills[/bold]")
-    for name, skill_path in skills:
-        target = _SKILLS_TARGET / name
-        if target.is_symlink() and target.resolve() == skill_path.resolve():
-            console.print(f"  [bold green]✓[/bold green] {name}")
-        elif target.exists():
-            console.print(f"  [yellow]⚠[/yellow] {name} — exists but not linked to repo")
+    if skills:
+        for name, skill_path in skills:
+            target = _SKILLS_TARGET / name
+            if target.is_symlink() and target.resolve() == skill_path.resolve():
+                console.print(f"  [bold green]✓[/bold green] {name}")
+            elif target.is_symlink() and not target.exists():
+                console.print(f"  [yellow]⚠[/yellow] {name} — dangling symlink")
+            elif target.exists():
+                console.print(f"  [yellow]⚠[/yellow] {name} — exists but not linked to repo")
+            else:
+                console.print(f"  [dim]✗ {name} — not installed[/dim]")
+    else:
+        # Repo not found — report what's installed by pattern
+        installed = _installed_memory_bank_skills()
+        if installed:
+            for name, _ in installed:
+                console.print(f"  [bold green]✓[/bold green] {name}")
         else:
-            console.print(f"  [dim]✗ {name} — not installed[/dim]")
+            console.print("  [dim]No memory-bank skills found[/dim]")
+        console.print("  [dim](repo root not found — showing installed skills only)[/dim]")
 
     console.print("\n[bold]Hooks[/bold]")
     if SETTINGS_PATH.exists():
