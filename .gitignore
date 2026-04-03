@@ -11,3 +11,4 @@ build/
 venv/
 .claude/settings.local.json
 docs/superpowers
+.llm/
