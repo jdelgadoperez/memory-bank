@@ -39,6 +39,16 @@ If the DB is empty (0 messages), ingest first:
 memory-bank ingest claude-code
 ```
 
+## When to search vs. recall
+
+| User asks | Approach |
+|---|---|
+| "Did we discuss X?" | Search first with `--agent` to find relevant messages |
+| "Show me the full conversation about X" | Search to find session ID, then replay full session |
+| "What was our solution for X?" | Search with `--role assistant` to focus on solutions |
+| "What requirements did we discuss for X?" | Search with `--role user` to focus on requirements |
+| "Remind me of that debugging session" | List sessions, then recall full session |
+
 ## Recall workflow
 
 ### Step 1: Find the relevant session
@@ -57,6 +67,16 @@ Narrow by project if needed:
 memory-bank search "topic" --agent --project project-name
 ```
 
+For long-running projects with many sessions, add a time range to reduce scope:
+
+```bash
+memory-bank search "topic" --agent --project my-app --since 30d
+```
+
+**If multiple sessions match with similar scores:** Refine the query with more specific keywords, add `--project` filtering, or inspect candidates with `memory-bank session <uuid>` before committing to one.
+
+**If no sessions match:** Broaden the query (fewer or different keywords), remove `--since` filters, or switch to listing sessions directly with `memory-bank sessions --project <name>`.
+
 ### Step 2: Browse sessions (alternative)
 
 List recent sessions for a project:
@@ -71,6 +91,12 @@ Or list all recent sessions:
 memory-bank sessions --limit 20
 ```
 
+Filter by time range for large projects:
+
+```bash
+memory-bank sessions --project my-app --since 1m --before 1w
+```
+
 ### Step 3: Retrieve full session context
 
 Once you have the session ID, pull messages from that session:
@@ -82,7 +108,23 @@ memory-bank session <session-uuid>
 Or search within a specific session for targeted results:
 
 ```bash
-memory-bank search "topic" --session <session-uuid> --agent --limit 50
+memory-bank search "topic" --session <session-uuid> --agent --limit 10
+```
+
+Add `--context` to include surrounding messages — useful to understand if a result was a solution or a dead-end:
+
+```bash
+memory-bank search "topic" --session <session-uuid> --agent --context 3
+```
+
+Use role filtering to focus the search:
+
+```bash
+# Focus on what Claude recommended (solutions, implementation)
+memory-bank search "implementation" --session <session-uuid> --role assistant --agent
+
+# Focus on what the user requested (requirements, questions)
+memory-bank search "requirements" --session <session-uuid> --role user --agent
 ```
 
 ### Step 4: Synthesize and present
@@ -91,6 +133,7 @@ memory-bank search "topic" --session <session-uuid> --agent --limit 50
 - Present a concise summary focused on what's relevant to the current task
 - Quote specific messages when precision matters (e.g., exact commands, config values)
 - Note the date and project for temporal context
+- For large sessions, use `--role` filters to narrow before synthesizing rather than reading everything
 
 ## Tips
 
@@ -99,5 +142,15 @@ memory-bank search "topic" --session <session-uuid> --agent --limit 50
 - Use `--role assistant` to focus on what Claude recommended
 - Use `--role user` to focus on what the user described/requested
 - Multiple search queries may be needed to find the right session
-- If a session is very long, use targeted searches within it rather than pulling everything
+- If a session is very long, use targeted searches within it with `--session <uuid>` + `--role` filter
 - Use `--current-project` to automatically scope to the current git project
+
+## Troubleshooting
+
+| Problem | Solution |
+|---|---|
+| No results found | Rephrase query, lower `--min-score 0.3`, remove `--since` filters, or use `memory-bank sessions` to browse |
+| Multiple sessions match | Inspect each with `memory-bank session <uuid>` to compare before choosing |
+| "DB locked" error | Another process is ingesting — wait and retry, or check with `memory-bank stats` |
+| Session is very large | Use `--session <uuid>` + `--role` filter to focus; add `--context N` for surrounding messages |
+| Command not found | Run `memory-bank setup install` or check that the venv is activated |
