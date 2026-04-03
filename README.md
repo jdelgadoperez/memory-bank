@@ -2,6 +2,8 @@
 
 Local vector DB for ingesting and searching Claude chat histories. Ask "what did I work on last week?" and get real answers from your past sessions — no cloud, no server, everything runs on your machine.
 
+![memory-bank UI](./docs/images/memory-bank.png)
+
 ---
 
 ## Getting started

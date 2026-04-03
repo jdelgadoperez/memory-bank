@@ -9,3 +9,5 @@ build/
 .env
 .venv/
 venv/
+.claude/settings.local.json
+docs/superpowers
