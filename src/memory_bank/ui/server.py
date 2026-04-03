@@ -134,6 +134,9 @@ HTML = r"""<!DOCTYPE html>
         <option value="100">100</option>
       </select>
     </div>
+    <div class="filter-group">
+      <button onclick="resetFilters()" style="width:100%;margin-top:.25rem">Reset filters</button>
+    </div>
   </aside>
   <div id="content">
     <div class="tab-bar">
@@ -400,6 +403,16 @@ function onFilterChange(){
 let projectDebounce;
 document.getElementById('f-project').addEventListener('input',()=>{clearTimeout(projectDebounce);projectDebounce=setTimeout(onFilterChange,400);});
 
+function resetFilters(){
+  document.getElementById('f-source').value='';
+  document.getElementById('f-role').value='';
+  document.getElementById('f-project').value='';
+  document.getElementById('f-date-from').value='';
+  document.getElementById('f-date-to').value='';
+  document.getElementById('f-limit').value='10';
+  onFilterChange();
+}
+
 loadStats().then(()=>loadSessions());
 </script>
 </body>
@@ -501,7 +514,7 @@ def ui(ctx, port, no_browser, db):
 
             elif path == "/api/sessions":
                 qs = parse_qs(parsed.query)
-                limit = int(qs.get("limit", ["50"])[0])
+                limit = int(qs.get("limit", ["10"])[0])
                 source = qs.get("source", [""])[0] or None
                 project = qs.get("project", [""])[0] or None
                 date_from = qs.get("date_from", [""])[0] or None
@@ -539,7 +552,7 @@ def ui(ctx, port, no_browser, db):
                 if not q:
                     self.send_json({"error": "missing query"}, 400)
                     return
-                limit = int(qs.get("limit", ["25"])[0])
+                limit = int(qs.get("limit", ["10"])[0])
                 source = qs.get("source", [""])[0] or None
                 role = qs.get("role", [""])[0] or None
                 project = qs.get("project", [""])[0] or None

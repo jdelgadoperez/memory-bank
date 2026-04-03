@@ -159,6 +159,23 @@ def _decode_project_path(encoded: str) -> str:
     Claude Code encodes project paths by replacing / with -.
     e.g. '-home-user-my-project' -> '/home/user/my-project'
     We return just the last component as the project name.
+
+    Uses a greedy filesystem walk to correctly handle project names that
+    contain dashes (e.g. 'memory-bank'), which would otherwise be split
+    into path segments.
     """
-    decoded = encoded.replace("-", "/").lstrip("/")
-    return decoded.split("/")[-1] if decoded else encoded
+    parts = encoded.lstrip("-").split("-")
+    current = Path("/")
+    i = 0
+    while i < len(parts):
+        # Try longest match first so dashes in directory names are preserved
+        for j in range(len(parts), i, -1):
+            candidate = current / "-".join(parts[i:j])
+            if candidate.exists():
+                current = candidate
+                i = j
+                break
+        else:
+            # No filesystem match — return remaining parts joined with dashes
+            return "-".join(parts[i:])
+    return current.name or encoded

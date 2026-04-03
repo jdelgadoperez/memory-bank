@@ -196,9 +196,14 @@ def install(skip_hooks: bool, trigger: str) -> None:
         if changed:
             save_settings(settings)
 
+    console.print("\n[bold green]Setup complete![/bold green]")
+    console.print("\n[bold]Next steps[/bold]")
+    console.print("  1. Index your history:    [bold]memory-bank ingest claude-code[/bold]")
+    console.print("  2. Open the browser UI:   [bold]memory-bank ui[/bold]")
+    console.print("  3. Search from the CLI:   [bold]memory-bank search \"your query\"[/bold]")
     console.print(
-        "\n[bold green]Setup complete.[/bold green] "
-        "Skills, hooks, and MCP server are ready for your next Claude Code session."
+        "\n  MCP tools available in your next Claude Code session: "
+        "[dim]search_memory, list_sessions, get_session[/dim]"
     )
 
 

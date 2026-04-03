@@ -1,0 +1,13 @@
+{
+  "name": "memory-bank",
+  "version": "0.1.0",
+  "description": "Local vector DB for ingesting and searching AI chat histories (Claude Code, Claude Desktop, ChatGPT)",
+  "author": {
+    "name": "jdelgadoperez"
+  },
+  "repository": "https://github.com/jdelgadoperez/memory-bank",
+  "keywords": ["memory", "search", "history", "claude", "rag"],
+  "skills": "./skills/",
+  "hooks": "./hooks/hooks.json",
+  "mcpServers": "./.mcp.json"
+}

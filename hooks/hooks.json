@@ -1,0 +1,12 @@
+{
+  "Stop": [
+    {
+      "command": "memory-bank ingest claude-code >> ~/.memory-bank/ingest.log 2>&1 &"
+    }
+  ],
+  "UserPromptSubmit": [
+    {
+      "command": "memory-bank hooks recall 2>> ~/.memory-bank/ingest.log"
+    }
+  ]
+}
