@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
 import rich_click as click
 
 from memory_bank.cli import CONTEXT_SETTINGS, console, cli
+from memory_bank.db import MemoryDB
 
 
 # ---------------------------------------------------------------------------
@@ -286,9 +290,6 @@ def context_summary(db, limit):
     summary into the project's CLAUDE.md (fenced with HTML comment markers)
     so Claude Code picks it up automatically.
     """
-    import subprocess
-    from memory_bank.db import MemoryDB
-
     db_obj = MemoryDB(Path(db) if db else None)
 
     # Detect current project from git
@@ -353,6 +354,120 @@ def context_summary(db, limit):
             console.print(f"[dim]Injected context into {project_root / 'CLAUDE.md'}[/dim]")
         except Exception as exc:
             console.print(f"[yellow]Warning:[/yellow] could not update CLAUDE.md: {exc}")
+
+
+@hooks.command("recall", context_settings=CONTEXT_SETTINGS, hidden=True)
+@click.option(
+    "--db",
+    type=click.Path(),
+    default=None,
+    envvar="MEMORY_BANK_DB",
+    metavar="DIR",
+)
+def recall(db):
+    """
+    [Internal] Called by the UserPromptSubmit hook.
+
+    Searches memory-bank for context relevant to the current user prompt
+    and prints it to stdout for injection into Claude's context.
+    Disable with MEMORY_BANK_RECALL=0.
+    """
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+
+    # Toggle check
+    if os.environ.get("MEMORY_BANK_RECALL") == "0":
+        return
+
+    # Read prompt from env
+    prompt = os.environ.get("CLAUDE_USER_PROMPT", "")
+    if not prompt.strip():
+        return
+
+    # Skip guard
+    if should_skip_recall(prompt):
+        return
+
+    # Truncate query
+    query = prompt[:512]
+
+    # Detect project
+    project = None
+    project_name = None
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True, text=True, check=True,
+        )
+        project_root = r.stdout.strip()
+        project_name = Path(project_root).name
+        project = project_name
+    except Exception:
+        pass
+
+    # Search with timeout
+    db_obj = MemoryDB(Path(db) if db else None)
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        try:
+            results = pool.submit(
+                db_obj.search,
+                query=query,
+                limit=10,
+                project=project,
+            ).result(timeout=1.0)
+        except FuturesTimeoutError:
+            return
+        except Exception as exc:
+            print(f"recall: search error: {exc}", file=sys.stderr)
+            return
+
+    # Filter by min score
+    results = [r for r in results if r.get("score", 0) >= RECALL_MIN_SCORE]
+
+    # Deduplicate by session
+    seen_sessions: set[str] = set()
+    deduplicated: list[dict] = []
+    for r in results:
+        sid = r.get("session_id", "")
+        if sid not in seen_sessions:
+            deduplicated.append(r)
+            seen_sessions.add(sid)
+        if len(deduplicated) >= RECALL_LIMIT:
+            break
+
+    if not deduplicated:
+        return
+
+    # Format output
+    lines = [
+        "<!-- memory-bank:recall -->",
+        "The following past context is semantically relevant to the current prompt. "
+        "Reference it if it helps \u2014 do not repeat it back to the user.",
+        "",
+    ]
+
+    for r in deduplicated:
+        date = (r.get("timestamp") or "")[:10]
+        role = r.get("role", "?")
+        sid = r.get("session_id", "")
+        result_project = r.get("project", "")
+        snippet = r.get("content", "")[:RECALL_SNIPPET_LENGTH]
+        if len(r.get("content", "")) > RECALL_SNIPPET_LENGTH:
+            snippet += "\u2026"
+
+        meta = f"{date} | session: `{sid[:16]}`"
+        if result_project and result_project != project_name:
+            meta += f" | project: {result_project}"
+        meta += f" ({role})"
+
+        lines.append(f"- {meta}")
+        lines.append(f"  > {snippet}")
+        lines.append("")
+
+    lines.append("<!-- /memory-bank:recall -->")
+
+    # Print to stdout for Claude injection
+    click.echo("\n".join(lines))
 
 
 @hooks.command(context_settings=CONTEXT_SETTINGS)
