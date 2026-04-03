@@ -48,7 +48,7 @@ tokens than `--json` while preserving all signal needed to answer the user.
 memory-bank search "your query" --agent
 ```
 
-Override defaults when needed:
+In `--agent` mode, `min-score` defaults to `0.5` and `limit` defaults to `5`. Override when needed:
 
 ```bash
 # More results, lower score bar, longer snippets
@@ -59,6 +59,18 @@ memory-bank search "query" --agent --project my-app --role assistant
 
 # Filter by source
 memory-bank search "query" --agent --source claude-code
+
+# Filter by message category (bugfix, feature, refactor, decision, research)
+memory-bank search "authentication" --agent --category bugfix
+
+# Include surrounding context to understand whether a result was a solution or dead-end
+memory-bank search "docker fix" --agent --context 2
+
+# Remove duplicate results across sessions (keeps highest-scoring copy)
+memory-bank search "docker fix" --agent --dedupe
+
+# Scope to the current working directory's project
+memory-bank search "refactor" --agent --current-project --dedupe
 ```
 
 ### Human-readable table (for showing results to the user)
@@ -81,7 +93,11 @@ MEMORY_BANK_DB=/custom/path memory-bank search "query" --agent
 1. Run `memory-bank search "..." --agent`
 2. Parse the compact JSON array: each object has `score`, `role`, `src`, `date`, `text`, and optionally `proj` / `sid`
 3. Summarize the most relevant findings to the user, quoting briefly
-4. If results are empty or all low-score, retry with a rephrased query or drop `--min-score`
+4. If results are empty or low quality:
+   - Rephrase the query more semantically (e.g. "container networking" instead of "docker errors")
+   - Lower `--min-score` to `0.3`
+   - Remove or broaden `--since` / `--before` filters
+   - Increase `--limit` to `20`
 
 ## Ingest commands reference
 
