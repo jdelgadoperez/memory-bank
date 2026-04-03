@@ -128,8 +128,9 @@ HTML = r"""<!DOCTYPE html>
     <div class="filter-group">
       <label style="font-size:.75rem;color:var(--muted)">Limit</label>
       <select id="f-limit">
+        <option value="10" selected>10</option>
         <option value="25">25</option>
-        <option value="50" selected>50</option>
+        <option value="50">50</option>
         <option value="100">100</option>
       </select>
     </div>
