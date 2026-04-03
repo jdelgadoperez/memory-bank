@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -9,9 +10,8 @@ from typing import Any
 
 import rich_click as click
 
-from memory_bank.cli import CONTEXT_SETTINGS, console, cli
+from memory_bank.cli import CONTEXT_SETTINGS, cli, console
 from memory_bank.db import MemoryDB
-
 
 # ---------------------------------------------------------------------------
 # Shared hook helpers (also used by commands/setup.py)
@@ -41,8 +41,8 @@ PRECOMPACT_HOOK_MARKER = "memory-bank ingest claude-code"
 from memory_bank.commands._recall_guard import (  # noqa: E402
     RECALL_HOOK_COMMAND,
     RECALL_HOOK_MARKER,
-    RECALL_MIN_SCORE,
     RECALL_LIMIT,
+    RECALL_MIN_SCORE,
     RECALL_SNIPPET_LENGTH,
     SKIP_RECALL_PATTERNS,
     should_skip_recall,
@@ -321,8 +321,8 @@ def context_summary(db, limit):
     out_path = Path.home() / ".memory-bank" / "context.md"
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    from datetime import datetime, timezone
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    from datetime import UTC, datetime
+    now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     lines = [
         f"# Memory Bank Context  ·  {now}",
         f"Project: **{project or 'unknown'}**\n",
@@ -376,7 +376,8 @@ def recall(db):
     and prints it to stdout for injection into Claude's context.
     Disable with MEMORY_BANK_RECALL=0.
     """
-    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import TimeoutError as FuturesTimeoutError
 
     # Toggle check
     if os.environ.get("MEMORY_BANK_RECALL") == "0":
