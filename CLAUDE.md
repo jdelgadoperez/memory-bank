@@ -204,6 +204,8 @@ src/memory_bank/
 ├── schema.py              — ChatMessage dataclass + IngestResult
 ├── db.py                  — Qdrant wrapper (upsert, search, stats, delete, sessions)
 ├── cli.py                 — CLI entry point + shared config
+├── categorizer.py         — keyword-based message categorization
+├── router.py              — ingest routing (direct DB or HTTP via UI server)
 ├── mcp_server.py          — FastMCP server (search_memory, get_session, list_sessions)
 ├── commands/
 │   ├── ingest.py          — ingest subcommands (claude-code, claude-desktop, all, custom)
@@ -220,7 +222,7 @@ src/memory_bank/
     ├── claude_code.py     — ~/.claude/projects/**/*.jsonl
     ├── claude_desktop.py  — Claude Desktop JSON export
     ├── chatgpt.py         — ChatGPT data export (conversations.json)
-    └── custom.py          — Generic mapper-based ingestor
+    └── custom.py          — generic mapper-based ingestor
 
 scripts/
 └── search_agent.py        — Agentic search via Anthropic API

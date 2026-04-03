@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from typing import Any
 
 import rich_click as click
 
@@ -27,29 +29,27 @@ STOP_HOOK_MARKER = "memory-bank ingest claude-code"
 START_HOOK_MARKER = "memory-bank hooks context-summary"
 
 
-def load_settings(path: Path | None = None) -> dict:
+def load_settings(path: Path | None = None) -> dict[str, Any]:
     p = path or SETTINGS_PATH
     if p.exists():
-        import json
         return json.loads(p.read_text())
     return {}
 
 
-def save_settings(settings: dict, path: Path | None = None) -> None:
-    import json
+def save_settings(settings: dict[str, Any], path: Path | None = None) -> None:
     p = path or SETTINGS_PATH
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(settings, indent=2) + "\n")
 
 
-def hook_entry(command: str) -> dict:
+def hook_entry(command: str) -> dict[str, Any]:
     return {
         "matcher": "",
         "hooks": [{"type": "command", "command": command}],
     }
 
 
-def is_installed(settings: dict, hook_type: str, marker: str) -> bool:
+def is_installed(settings: dict[str, Any], hook_type: str, marker: str) -> bool:
     for entry in settings.get("hooks", {}).get(hook_type, []):
         for h in entry.get("hooks", []):
             if marker in h.get("command", ""):
@@ -57,16 +57,14 @@ def is_installed(settings: dict, hook_type: str, marker: str) -> bool:
     return False
 
 
-def remove_hooks(path: Path | None = None) -> bool:
-    """Remove all memory-bank hooks from settings. Returns True if any were removed."""
-    import json
-
+def remove_hooks(path: Path | None = None) -> list[str]:
+    """Remove all memory-bank hooks from settings. Returns list of removed event names."""
     p = path or SETTINGS_PATH
     if not p.exists():
-        return False
+        return []
 
     settings = json.loads(p.read_text())
-    removed = False
+    removed: list[str] = []
 
     all_markers = (STOP_HOOK_MARKER, START_HOOK_MARKER)
     for event in list(settings.get("hooks", {}).keys()):
@@ -83,8 +81,7 @@ def remove_hooks(path: Path | None = None) -> bool:
                 settings["hooks"][event] = after
             else:
                 del settings["hooks"][event]
-            console.print(f"[bold green]Removed:[/bold green] {event} hook.")
-            removed = True
+            removed.append(event)
 
     if removed:
         p.write_text(json.dumps(settings, indent=2) + "\n")
@@ -151,8 +148,6 @@ def install(trigger, settings_path):
       memory-bank hooks install --on both
       memory-bank hooks install --settings /path/to/settings.json
     """
-    import json
-
     path = Path(settings_path).expanduser() if settings_path else SETTINGS_PATH
     settings = load_settings(path)
     hooks_cfg = settings.setdefault("hooks", {})
@@ -320,6 +315,8 @@ def uninstall(settings_path):
         return
 
     removed = remove_hooks(path)
+    for event in removed:
+        console.print(f"[bold green]Removed:[/bold green] {event} hook.")
     if removed:
         console.print(f"[dim]Saved to {path}[/dim]")
     else:
