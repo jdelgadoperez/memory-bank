@@ -7,48 +7,88 @@ import rich_click as click
 from memory_bank.cli import CONTEXT_SETTINGS, console, cli
 
 
-_SETTINGS_PATH = Path("~/.claude/settings.json").expanduser()
+# ---------------------------------------------------------------------------
+# Shared hook helpers (also used by commands/setup.py)
+# ---------------------------------------------------------------------------
 
-_STOP_HOOK_COMMAND = (
+SETTINGS_PATH = Path("~/.claude/settings.json").expanduser()
+
+STOP_HOOK_COMMAND = (
     "memory-bank ingest claude-code"
     " >> ~/.memory-bank/ingest.log 2>&1 &"
 )
 
-_START_CONTEXT_COMMAND = (
+START_CONTEXT_COMMAND = (
     "memory-bank hooks context-summary"
     " >> ~/.memory-bank/ingest.log 2>&1 &"
 )
 
-_STOP_HOOK_MARKER = "memory-bank ingest claude-code"
-_START_HOOK_MARKER = "memory-bank hooks context-summary"
+STOP_HOOK_MARKER = "memory-bank ingest claude-code"
+START_HOOK_MARKER = "memory-bank hooks context-summary"
 
 
-def _load_settings() -> dict:
-    if _SETTINGS_PATH.exists():
+def load_settings(path: Path | None = None) -> dict:
+    p = path or SETTINGS_PATH
+    if p.exists():
         import json
-        return json.loads(_SETTINGS_PATH.read_text())
+        return json.loads(p.read_text())
     return {}
 
 
-def _save_settings(settings: dict) -> None:
+def save_settings(settings: dict, path: Path | None = None) -> None:
     import json
-    _SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    _SETTINGS_PATH.write_text(json.dumps(settings, indent=2) + "\n")
+    p = path or SETTINGS_PATH
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(settings, indent=2) + "\n")
 
 
-def _hook_entry(command: str) -> dict:
+def hook_entry(command: str) -> dict:
     return {
         "matcher": "",
         "hooks": [{"type": "command", "command": command}],
     }
 
 
-def _is_installed(settings: dict, hook_type: str, marker: str) -> bool:
+def is_installed(settings: dict, hook_type: str, marker: str) -> bool:
     for entry in settings.get("hooks", {}).get(hook_type, []):
         for h in entry.get("hooks", []):
             if marker in h.get("command", ""):
                 return True
     return False
+
+
+def remove_hooks(path: Path | None = None) -> bool:
+    """Remove all memory-bank hooks from settings. Returns True if any were removed."""
+    import json
+
+    p = path or SETTINGS_PATH
+    if not p.exists():
+        return False
+
+    settings = json.loads(p.read_text())
+    removed = False
+
+    all_markers = (STOP_HOOK_MARKER, START_HOOK_MARKER)
+    for event in list(settings.get("hooks", {}).keys()):
+        before = settings["hooks"][event]
+        after = [
+            entry for entry in before
+            if not any(
+                any(marker in h.get("command", "") for marker in all_markers)
+                for h in entry.get("hooks", [])
+            )
+        ]
+        if len(after) < len(before):
+            if after:
+                settings["hooks"][event] = after
+            else:
+                del settings["hooks"][event]
+            console.print(f"[bold green]Removed:[/bold green] {event} hook.")
+            removed = True
+
+    if removed:
+        p.write_text(json.dumps(settings, indent=2) + "\n")
+    return removed
 
 
 @cli.group(context_settings=CONTEXT_SETTINGS)
@@ -113,30 +153,27 @@ def install(trigger, settings_path):
     """
     import json
 
-    path = Path(settings_path).expanduser() if settings_path else _SETTINGS_PATH
-    settings = _load_settings() if path == _SETTINGS_PATH else (
-        {} if not path.exists() else json.loads(path.read_text())
-    )
+    path = Path(settings_path).expanduser() if settings_path else SETTINGS_PATH
+    settings = load_settings(path)
     hooks_cfg = settings.setdefault("hooks", {})
 
     plan = []
     if trigger in ("stop", "both"):
-        plan.append(("Stop", _STOP_HOOK_COMMAND, _STOP_HOOK_MARKER))
+        plan.append(("Stop", STOP_HOOK_COMMAND, STOP_HOOK_MARKER))
     if trigger in ("start", "both"):
-        plan.append(("SessionStart", _START_CONTEXT_COMMAND, _START_HOOK_MARKER))
+        plan.append(("SessionStart", START_CONTEXT_COMMAND, START_HOOK_MARKER))
 
     installed_any = False
     for event, command, marker in plan:
-        if _is_installed(settings, event, marker):
+        if is_installed(settings, event, marker):
             console.print(f"[yellow]Already installed:[/yellow] {event} hook — skipping.")
             continue
-        hooks_cfg.setdefault(event, []).append(_hook_entry(command))
+        hooks_cfg.setdefault(event, []).append(hook_entry(command))
         console.print(f"[bold green]Installed:[/bold green] {event} hook → [dim]{command}[/dim]")
         installed_any = True
 
     if installed_any:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(settings, indent=2) + "\n")
+        save_settings(settings, path)
         console.print(f"[dim]Saved to {path}[/dim]")
 
         if trigger in ("start", "both"):
@@ -277,35 +314,13 @@ def context_summary(db, limit):
 )
 def uninstall(settings_path):
     """Remove all memory-bank auto-ingest hooks from ~/.claude/settings.json."""
-    path = Path(settings_path).expanduser() if settings_path else _SETTINGS_PATH
+    path = Path(settings_path).expanduser() if settings_path else SETTINGS_PATH
     if not path.exists():
         console.print("[yellow]No settings.json found — nothing to remove.[/yellow]")
         return
 
-    import json
-    settings = json.loads(path.read_text())
-    removed = False
-
-    _all_markers = (_STOP_HOOK_MARKER, _START_HOOK_MARKER)
-    for event in list(settings.get("hooks", {}).keys()):
-        before = settings["hooks"][event]
-        after = [
-            entry for entry in before
-            if not any(
-                any(marker in h.get("command", "") for marker in _all_markers)
-                for h in entry.get("hooks", [])
-            )
-        ]
-        if len(after) < len(before):
-            if after:
-                settings["hooks"][event] = after
-            else:
-                del settings["hooks"][event]
-            console.print(f"[bold green]Removed:[/bold green] {event} hook.")
-            removed = True
-
+    removed = remove_hooks(path)
     if removed:
-        path.write_text(json.dumps(settings, indent=2) + "\n")
         console.print(f"[dim]Saved to {path}[/dim]")
     else:
         console.print("[yellow]No memory-bank hooks found.[/yellow]")
@@ -322,20 +337,19 @@ def uninstall(settings_path):
 )
 def status(settings_path):
     """Show whether auto-ingest hooks are currently installed."""
-    path = Path(settings_path).expanduser() if settings_path else _SETTINGS_PATH
+    path = Path(settings_path).expanduser() if settings_path else SETTINGS_PATH
     if not path.exists():
         console.print(f"[yellow]No settings.json found at {path}[/yellow]")
         return
 
-    import json
-    settings = json.loads(path.read_text())
+    settings = load_settings(path)
 
     checks = [
-        ("Stop", _STOP_HOOK_MARKER, "ingest"),
-        ("SessionStart", _START_HOOK_MARKER, "context-summary"),
+        ("Stop", STOP_HOOK_MARKER, "ingest"),
+        ("SessionStart", START_HOOK_MARKER, "context-summary"),
     ]
     for event, marker, kind in checks:
-        if _is_installed(settings, event, marker):
+        if is_installed(settings, event, marker):
             console.print(f"[bold green]✓[/bold green]  {event} hook  [dim]({kind}) installed[/dim]")
         else:
             console.print(f"[dim]✗  {event} hook  ({kind}) not installed[/dim]")

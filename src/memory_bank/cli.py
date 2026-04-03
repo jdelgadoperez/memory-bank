@@ -33,12 +33,8 @@ click.rich_click.COMMAND_GROUPS = {
             "commands": ["search", "sessions", "session", "stats", "delete", "ui"],
         },
         {
-            "name": "Hooks",
-            "commands": ["hooks"],
-        },
-        {
-            "name": "Integrations",
-            "commands": ["mcp"],
+            "name": "Integration",
+            "commands": ["setup", "hooks", "mcp"],
         },
     ],
     "memory-bank ingest": [
@@ -231,5 +227,5 @@ def _run_ingest(ingestor, db_path: Path | None = None, _drain: bool = True):
 # Register command groups
 # ---------------------------------------------------------------------------
 
-from memory_bank.commands import ingest, search, manage, hooks, mcp  # noqa: E402, F401
+from memory_bank.commands import ingest, search, manage, hooks, mcp, setup  # noqa: E402, F401
 from memory_bank.ui import server  # noqa: E402, F401
