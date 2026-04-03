@@ -125,7 +125,7 @@ def remove_hooks(path: Path | None = None) -> list[str]:
     settings = json.loads(p.read_text())
     removed: list[str] = []
 
-    all_markers = (STOP_HOOK_MARKER, START_HOOK_MARKER, PRECOMPACT_HOOK_MARKER)
+    all_markers = (STOP_HOOK_MARKER, START_HOOK_MARKER, PRECOMPACT_HOOK_MARKER, RECALL_HOOK_MARKER)
     for event in list(settings.get("hooks", {}).keys()):
         before = settings["hooks"][event]
         after = [
@@ -169,16 +169,18 @@ def hooks():
 @click.option(
     "--on",
     "trigger",
-    type=click.Choice(["stop", "start", "precompact", "both", "all"]),
+    type=click.Choice(["stop", "start", "precompact", "recall", "both", "recommended", "all"]),
     default="stop",
     show_default=True,
     help=(
         "Which Claude Code hook event to attach to.\n\n"
-        "stop       = after each session ends — runs ingest (recommended)\n"
-        "start      = when a new session begins — writes a context summary\n"
-        "precompact = before context compaction — captures full transcript\n"
-        "both       = stop + start\n"
-        "all        = stop + start + precompact"
+        "stop        = after each session ends \u2014 runs ingest (recommended)\n"
+        "start       = when a new session begins \u2014 writes a context summary\n"
+        "precompact  = before context compaction \u2014 captures full transcript\n"
+        "recall      = before each prompt \u2014 injects relevant past context\n"
+        "both        = stop + start\n"
+        "recommended = stop + recall\n"
+        "all         = stop + start + precompact + recall"
     ),
 )
 @click.option(
@@ -220,6 +222,8 @@ def install(trigger, settings_path):
         plan.append(("SessionStart", START_CONTEXT_COMMAND, START_HOOK_MARKER))
     if trigger in ("precompact", "all"):
         plan.append(("PreCompact", PRECOMPACT_HOOK_COMMAND, PRECOMPACT_HOOK_MARKER))
+    if trigger in ("recall", "recommended", "all"):
+        plan.append(("UserPromptSubmit", RECALL_HOOK_COMMAND, RECALL_HOOK_MARKER))
 
     installed_any = False
     for event, command, marker in plan:
@@ -517,6 +521,7 @@ def status(settings_path):
         ("Stop", STOP_HOOK_MARKER, "ingest"),
         ("SessionStart", START_HOOK_MARKER, "context-summary"),
         ("PreCompact", PRECOMPACT_HOOK_MARKER, "pre-compaction ingest"),
+        ("UserPromptSubmit", RECALL_HOOK_MARKER, "recall"),
     ]
     for event, marker, kind in checks:
         if is_installed(settings, event, marker):
