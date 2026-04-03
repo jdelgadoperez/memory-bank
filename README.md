@@ -248,15 +248,15 @@ memory-bank hooks uninstall            # remove all memory-bank hooks
 
 Hooks run in the background and append output to `~/.memory-bank/ingest.log`. Your existing hooks in `~/.claude/settings.json` are preserved. Re-running `install` is safe — already-installed hooks are skipped.
 
-| `--on` value    | Trigger |
-|---|---|
-| `stop`          | After each session ends (default, recommended) |
-| `start`         | When a new session begins |
-| `precompact`    | Before context compaction |
-| `recall`        | Before each prompt — injects relevant past context |
-| `both`          | stop + start |
-| `recommended`   | stop + recall |
-| `all`           | All hooks |
+| `--on` value  | Trigger                                            |
+| ------------- | -------------------------------------------------- |
+| `stop`        | After each session ends (default, recommended)     |
+| `start`       | When a new session begins                          |
+| `precompact`  | Before context compaction                          |
+| `recall`      | Before each prompt — injects relevant past context |
+| `both`        | stop + start                                       |
+| `recommended` | stop + recall                                      |
+| `all`         | All hooks                                          |
 
 The recall hook can be temporarily disabled by setting `MEMORY_BANK_RECALL=0` in your shell.
 
