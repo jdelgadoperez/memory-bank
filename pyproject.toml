@@ -24,7 +24,7 @@ memory-bank = "memory_bank.cli:cli"
 where = ["src"]
 
 [project.optional-dependencies]
-dev = ["ruff>=0.4", "watchfiles>=0.21"]
+dev = ["ruff>=0.4", "watchfiles>=0.21", "pytest>=8.0"]
 mcp = ["mcp>=1.0"]
 
 [tool.ruff]
