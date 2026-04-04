@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "memory-bank"
 version = "0.1.0"
 description = "Ingest and search Claude chat histories using a local vector DB"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.14"
 dependencies = [
     "qdrant-client[fastembed]>=1.9.0",
     "onnxruntime",
