@@ -5,6 +5,7 @@ from pathlib import Path
 import rich_click as click
 from rich.console import Console
 from rich.panel import Panel
+from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.text import Text
 
 # ---------------------------------------------------------------------------
@@ -180,8 +181,28 @@ def _run_ingest(ingestor, db_path: Path | None = None, _drain: bool = True):
 
     from .categorizer import categorize
 
+    console.print(
+        f"[dim]Scanning [cyan]{source}[/cyan] — "
+        "first run downloads the embedding model (~25 MB)[/dim]"
+    )
+
     try:
-        with console.status(f"[bold magenta]Ingesting [cyan]{source}[/cyan]…[/bold magenta]"):
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[bold magenta]{task.description}[/bold magenta]"),
+            TextColumn("[dim]·[/dim]"),
+            TextColumn("{task.completed:>6} messages"),
+            TextColumn("[dim]({task.fields[ins]} new, {task.fields[skp]} skipped)[/dim]"),
+            TimeElapsedColumn(),
+            console=console,
+            transient=False,
+        ) as progress:
+            task = progress.add_task(
+                f"Ingesting [cyan]{source}[/cyan]",
+                total=None,
+                ins=0,
+                skp=0,
+            )
             batch: list = []
             for msg in ingestor.iter_messages():
                 result.total_found += 1
@@ -190,16 +211,19 @@ def _run_ingest(ingestor, db_path: Path | None = None, _drain: bool = True):
                     if cat:
                         msg.metadata["category"] = cat
                 batch.append(msg)
+                progress.advance(task)
                 if len(batch) >= BATCH_SIZE:
                     ins, skp = router.upsert(batch)
                     result.inserted += ins
                     result.skipped += skp
                     batch = []
+                    progress.update(task, ins=result.inserted, skp=result.skipped)
 
             if batch:
                 ins, skp = router.upsert(batch)
                 result.inserted += ins
                 result.skipped += skp
+                progress.update(task, ins=result.inserted, skp=result.skipped)
     except DatabaseLockedError:
         _write_pending_marker(source)
         console.print(
