@@ -6,7 +6,7 @@ Local vector DB for ingesting and searching Claude chat histories. Ask "what did
 
 ## Getting started
 
-**Prerequisites:** Python 3.11–3.13 and [`uv`](https://docs.astral.sh/uv/) (Python 3.14 is not yet supported — `onnxruntime` has no wheel for it)
+**Prerequisites:** Python 3.11+ and [`uv`](https://docs.astral.sh/uv/)
 
 **Option 1 — one-step installer (recommended)**
 

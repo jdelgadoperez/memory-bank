@@ -20,11 +20,9 @@ fi
 cd "$INSTALL_DIR"
 
 # ── 2. Install dependencies ───────────────────────────────────────────────────
-# onnxruntime (used by fastembed) doesn't yet ship wheels for Python 3.14+.
-# Pin to 3.13 so uv doesn't pick up a newer interpreter if one is available.
 if command -v uv >/dev/null 2>&1; then
-  echo "→ Installing with uv (Python 3.13)"
-  uv sync --python 3.13
+  echo "→ Installing with uv"
+  uv sync
   uv pip install -e ".[mcp]"
 else
   echo "uv not found. Install it first: https://docs.astral.sh/uv/getting-started/installation/"
