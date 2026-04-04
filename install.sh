@@ -20,26 +20,31 @@ fi
 cd "$INSTALL_DIR"
 
 # ── 2. Install dependencies ───────────────────────────────────────────────────
-if command -v uv >/dev/null 2>&1; then
-  echo "→ Installing with uv"
-  uv sync
-  uv pip install -e ".[mcp]"
-else
+if ! command -v uv >/dev/null 2>&1; then
   echo "uv not found. Install it first: https://docs.astral.sh/uv/getting-started/installation/"
   exit 1
 fi
 
+echo "→ Installing with uv"
+uv sync --extra mcp
+
+# Use 'uv run' so commands execute inside the project venv without activation
+MB="uv run memory-bank"
+
 # ── 3. Wire Claude Code integration ──────────────────────────────────────────
 echo "→ Installing Claude Code hooks, skills, and MCP server"
-memory-bank setup install --on recommended
+$MB setup install --on recommended
 
 # ── 4. Initial ingest ─────────────────────────────────────────────────────────
 echo "→ Ingesting existing Claude Code history"
-memory-bank ingest claude-code
+$MB ingest claude-code
 
 echo ""
 echo "✓ memory-bank is ready!"
 echo ""
-echo "  memory-bank search \"your query\"   # search chat history"
-echo "  memory-bank ui                    # open browser UI"
-echo "  memory-bank stats                 # see what's indexed"
+echo "  uv run memory-bank search \"your query\"   # search chat history"
+echo "  uv run memory-bank ui                    # open browser UI"
+echo "  uv run memory-bank stats                 # see what's indexed"
+echo ""
+echo "  Tip: add an alias to your shell profile for convenience:"
+echo "    alias memory-bank=\"$INSTALL_DIR/.venv/bin/memory-bank\""
