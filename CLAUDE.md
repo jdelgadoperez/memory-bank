@@ -10,14 +10,14 @@ Local vector DB for ingesting and searching AI chat histories (Claude Code, Clau
 bash install.sh
 ```
 
-Clones the repo, runs `uv sync`, wires hooks and MCP server, and runs an initial ingest.
+Clones the repo, runs `uv sync`, symlinks `memory-bank` to `~/.local/bin/`, wires hooks and MCP server, and runs an initial ingest. After install, `memory-bank` is available as a shell command (ensure `~/.local/bin` is in your `PATH`).
 
 **Manual setup**
 
 ```bash
-uv pip install -e .
-# Optional: MCP server support
-uv pip install -e ".[mcp]"
+uv sync --extra mcp
+mkdir -p ~/.local/bin
+ln -sf "$PWD/.venv/bin/memory-bank" ~/.local/bin/memory-bank
 memory-bank setup install   # symlinks skills, installs hooks, registers MCP server
 ```
 

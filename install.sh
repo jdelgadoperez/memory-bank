@@ -7,6 +7,8 @@ set -e
 
 REPO_URL="https://github.com/jdelgadoperez/memory-bank"
 INSTALL_DIR="${MEMORY_BANK_DIR:-$HOME/.local/share/memory-bank}"
+BIN_DIR="$HOME/.local/bin"
+BIN_PATH="$BIN_DIR/memory-bank"
 
 # ── 1. Clone or update ────────────────────────────────────────────────────────
 if [ -d "$INSTALL_DIR/.git" ]; then
@@ -28,23 +30,34 @@ fi
 echo "→ Installing with uv"
 uv sync --extra mcp
 
-# Use 'uv run' so commands execute inside the project venv without activation
-MB="uv run memory-bank"
+# ── 3. Symlink binary so 'memory-bank' works from any shell ──────────────────
+echo "→ Linking memory-bank to $BIN_PATH"
+mkdir -p "$BIN_DIR"
+ln -sf "$INSTALL_DIR/.venv/bin/memory-bank" "$BIN_PATH"
 
-# ── 3. Wire Claude Code integration ──────────────────────────────────────────
+# Warn if ~/.local/bin is not on PATH
+case ":$PATH:" in
+  *":$BIN_DIR:"*) ;;
+  *)
+    echo ""
+    echo "  ⚠ $BIN_DIR is not in your PATH."
+    echo "  Add this to your shell profile (~/.zshrc or ~/.bashrc) and restart your terminal:"
+    echo "    export PATH=\"\$HOME/.local/bin:\$PATH\""
+    echo ""
+    ;;
+esac
+
+# ── 4. Wire Claude Code integration ──────────────────────────────────────────
 echo "→ Installing Claude Code hooks, skills, and MCP server"
-$MB setup install --on recommended
+"$BIN_PATH" setup install --on recommended
 
-# ── 4. Initial ingest ─────────────────────────────────────────────────────────
+# ── 5. Initial ingest ─────────────────────────────────────────────────────────
 echo "→ Ingesting existing Claude Code history"
-$MB ingest claude-code
+"$BIN_PATH" ingest claude-code
 
 echo ""
 echo "✓ memory-bank is ready!"
 echo ""
-echo "  uv run memory-bank search \"your query\"   # search chat history"
-echo "  uv run memory-bank ui                    # open browser UI"
-echo "  uv run memory-bank stats                 # see what's indexed"
-echo ""
-echo "  Tip: add an alias to your shell profile for convenience:"
-echo "    alias memory-bank=\"$INSTALL_DIR/.venv/bin/memory-bank\""
+echo "  memory-bank search \"your query\"   # search chat history"
+echo "  memory-bank ui                    # open browser UI"
+echo "  memory-bank stats                 # see what's indexed"

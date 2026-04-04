@@ -11,7 +11,6 @@ Local vector DB for ingesting and searching Claude chat histories. Ask "what did
 **Option 1 — one-step installer (recommended)**
 
 ```bash
-# Clone, install, wire hooks, and run first ingest in one shot
 bash <(curl -fsSL https://raw.githubusercontent.com/jdelgadoperez/memory-bank/main/install.sh)
 ```
 
@@ -22,36 +21,35 @@ git clone https://github.com/jdelgadoperez/memory-bank
 bash memory-bank/install.sh
 ```
 
+The installer clones the repo, runs `uv sync`, symlinks `memory-bank` to `~/.local/bin/`, wires Claude Code hooks and MCP, and runs an initial ingest. When it finishes, `memory-bank` is available as a shell command.
+
+> **PATH note:** If you see `zsh: command not found: memory-bank` after install, `~/.local/bin` is not in your PATH. Add this to your `~/.zshrc` or `~/.bashrc` and open a new terminal:
+> ```bash
+> export PATH="$HOME/.local/bin:$PATH"
+> ```
+
 **Option 2 — manual setup**
 
 ```bash
 # 1. Clone and install
 git clone <repo-url>
 cd memory-bank
-uv sync
+uv sync --extra mcp
 
-# 2. Wire up CLI, hooks, and Claude Code skills in one step
-memory-bank setup install
+# 2. Symlink the CLI so it's available globally
+mkdir -p ~/.local/bin
+ln -sf "$PWD/.venv/bin/memory-bank" ~/.local/bin/memory-bank
 
-# 3. Ingest your Claude Code history
+# 3. Wire up Claude Code hooks, skills, and MCP
+memory-bank setup install --on recommended
+
+# 4. Ingest your Claude Code history
 memory-bank ingest claude-code
 
-# 4. Search
+# 5. Search
 memory-bank search "authentication bug fix"
-memory-bank search "docker networking" --role assistant
-
-# 5. Check what's indexed
 memory-bank stats
 ```
-
-**Optional:** Add a shell alias for convenience:
-
-```bash
-alias memory-bank="/path/to/memory-bank/.venv/bin/memory-bank"
-source ~/.zshrc   # reload your shell
-```
-
-Replace `/path/to/memory-bank` with your clone location (e.g., `~/code/memory-bank`).
 
 **Note:** On first ingest, `BAAI/bge-small-en-v1.5` embedding model (~25 MB) downloads once from HuggingFace and runs fully offline after.
 
