@@ -9,7 +9,7 @@ import re
 
 RECALL_HOOK_COMMAND = (
     "memory-bank hooks recall"
-    " >> ~/.memory-bank/ingest.log 2>&1"
+    " 2>> ~/.memory-bank/ingest.log"
 )
 RECALL_HOOK_MARKER = "memory-bank hooks recall"
 RECALL_MIN_SCORE = 0.65
