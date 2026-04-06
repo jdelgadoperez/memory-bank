@@ -1,10 +1,14 @@
-"""Qdrant vector DB wrapper — embedded, per-request locking."""
+"""Qdrant vector DB wrapper — embedded or server mode with Docker auto-start."""
 from __future__ import annotations
 
 import hashlib
 import math
 import os
 import struct
+import subprocess
+import time
+import urllib.request
+import warnings
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -29,6 +33,10 @@ VECTOR_SIZE = 384
 
 DEFAULT_DB_PATH = Path.home() / ".memory-bank" / "qdrant"
 
+QDRANT_DOCKER_URL = "http://localhost:6333"
+QDRANT_CONTAINER_NAME = "memory-bank-qdrant"
+LARGE_COLLECTION_THRESHOLD = 20_000
+
 
 class DatabaseLockedError(Exception):
     """Raised when the Qdrant storage directory is locked by another process."""
@@ -37,6 +45,102 @@ class DatabaseLockedError(Exception):
 def get_db_path() -> Path:
     env = os.environ.get("MEMORY_BANK_DB")
     return Path(env) if env else DEFAULT_DB_PATH
+
+
+# ---------------------------------------------------------------------------
+# Qdrant server detection and Docker auto-start
+# ---------------------------------------------------------------------------
+
+def _ping_qdrant(url: str = QDRANT_DOCKER_URL, timeout: float = 1.0) -> bool:
+    """Return True if a Qdrant server is reachable at *url*/health."""
+    try:
+        urllib.request.urlopen(f"{url}/health", timeout=timeout)
+        return True
+    except Exception:
+        return False
+
+
+def _docker_daemon_running() -> bool:
+    """Return True if the Docker daemon is available on this machine."""
+    try:
+        r = subprocess.run(
+            ["docker", "info"], capture_output=True, timeout=5
+        )
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
+def _ensure_qdrant_container(storage_path: Path) -> bool:
+    """Start the memory-bank-qdrant container, creating it if needed.
+
+    Mounts *storage_path* at /qdrant/storage — the same path used by embedded
+    mode, so no data migration is needed when switching from embedded to Docker.
+    Returns True if the server becomes reachable within ~15 s.
+    """
+    inspect = subprocess.run(
+        ["docker", "inspect", "--format", "{{.State.Running}}", QDRANT_CONTAINER_NAME],
+        capture_output=True, text=True,
+    )
+    if inspect.returncode == 0 and inspect.stdout.strip() == "true":
+        return True  # already running
+
+    if inspect.returncode == 0:
+        # Container exists but stopped
+        subprocess.run(["docker", "start", QDRANT_CONTAINER_NAME], capture_output=True)
+    else:
+        # Create and start a new container
+        subprocess.run(
+            [
+                "docker", "run", "-d",
+                "--name", QDRANT_CONTAINER_NAME,
+                "-p", "6333:6333",
+                "--restart", "unless-stopped",
+                "-v", f"{storage_path}:/qdrant/storage:z",
+                "qdrant/qdrant",
+            ],
+            check=True,
+            capture_output=True,
+        )
+
+    # Wait up to 15 s for the health endpoint
+    for _ in range(30):
+        if _ping_qdrant():
+            return True
+        time.sleep(0.5)
+    return False
+
+
+def _resolve_qdrant_url(storage_path: Path) -> str | None:
+    """Determine the Qdrant server URL to use, or None for embedded mode.
+
+    Priority:
+      1. QDRANT_URL env var — explicit override (custom server / Qdrant Cloud)
+      2. localhost:6333 already responding — use it (user running Qdrant manually)
+      3. Docker daemon available — start memory-bank-qdrant container and use it
+      4. None — fall back to embedded mode
+    """
+    env_url = os.environ.get("QDRANT_URL")
+    if env_url:
+        return env_url
+
+    if _ping_qdrant():
+        return QDRANT_DOCKER_URL
+
+    if _docker_daemon_running():
+        from rich.console import Console
+        Console().print(
+            "[dim]→ Starting Qdrant via Docker "
+            f"({QDRANT_CONTAINER_NAME} on localhost:6333)…[/dim]"
+        )
+        if _ensure_qdrant_container(storage_path):
+            return QDRANT_DOCKER_URL
+        Console().print(
+            "[yellow]⚠ Docker container failed to start — "
+            "falling back to embedded Qdrant.[/yellow]"
+        )
+
+    return None  # embedded fallback
 
 
 def parse_time_expr(expr: str) -> str:
@@ -101,38 +205,65 @@ def _hash_embed(text: str, dim: int = VECTOR_SIZE) -> list[float]:
 
 
 class MemoryDB:
-    """Thin wrapper around an embedded Qdrant collection.
+    """Qdrant collection wrapper supporting embedded and server (Docker) mode.
 
-    The Qdrant client is opened and closed per operation via the ``_connect()``
-    context manager.  This allows multiple processes (e.g. the UI server and
-    CLI commands) to share the same storage directory without holding an
-    exclusive file lock for their entire lifetime.
+    On construction, ``_resolve_qdrant_url`` checks for a running Qdrant server
+    and auto-starts a Docker container if Docker is available.  If neither is
+    possible, embedded mode is used as a fallback.
 
-    The fastembed model (the slow part to load) is cached on the instance so
-    it only loads once.
+    The Qdrant client is opened and closed per operation via ``_connect()``,
+    allowing the CLI and UI server to share storage without holding long locks.
+    The fastembed model is cached on the instance so it only loads once.
     """
 
     def __init__(self, path: Path | None = None):
         self.path = path or get_db_path()
         self.path.mkdir(parents=True, exist_ok=True)
+        self._url: str | None = _resolve_qdrant_url(self.path)
         self._embedder = None   # loaded on first call to _embed()
         self._embedder_loaded = False
         self._collections_verified = False
 
+    @property
+    def mode(self) -> str:
+        """Return 'server' or 'embedded'."""
+        return "server" if self._url else "embedded"
+
     @contextmanager
     def _connect(self) -> Generator[QdrantClient, None, None]:
         """Acquire the Qdrant client for the duration of an operation."""
-        try:
-            client = QdrantClient(path=str(self.path))
-        except RuntimeError as exc:
-            if "already accessed by another instance" in str(exc):
-                raise DatabaseLockedError(
-                    f"Database is locked by another process.\n"
-                    f"Storage path: {self.path}\n"
-                    f"If the UI server is running, stop it with 'memory-bank ui stop' or Ctrl+C,\n"
-                    f"or use the UI's built-in search at http://127.0.0.1:6333."
-                ) from exc
-            raise
+        if self._url:
+            client = QdrantClient(url=self._url)
+        else:
+            # Embedded mode — intercept the 20k UserWarning and surface it cleanly
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                try:
+                    client = QdrantClient(path=str(self.path))
+                except RuntimeError as exc:
+                    if "already accessed by another instance" in str(exc):
+                        raise DatabaseLockedError(
+                            f"Database is locked by another process.\n"
+                            f"Storage path: {self.path}\n"
+                            f"If the UI server is running, stop it with "
+                            f"'memory-bank ui stop' or Ctrl+C,\n"
+                            f"or use the UI's built-in search at http://127.0.0.1:6333."
+                        ) from exc
+                    raise
+            for w in caught:
+                if (
+                    issubclass(w.category, UserWarning)
+                    and "Local mode is not recommended" in str(w.message)
+                ):
+                    from rich.console import Console
+                    Console().print(
+                        "[yellow]⚠ Collection exceeds 20k points — embedded Qdrant "
+                        "may be slow. Install Docker to enable automatic server mode.[/yellow]"
+                    )
+                else:
+                    warnings.warn_explicit(
+                        w.message, w.category, w.filename, w.lineno
+                    )
         try:
             if not self._collections_verified:
                 self._ensure_collection(client)
@@ -148,8 +279,18 @@ class MemoryDB:
                 collection_name=COLLECTION,
                 vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
             )
-        # Payload indexes only work in Qdrant server mode, not embedded.
-        # When/if we support server mode, add create_payload_index calls here.
+        # Payload indexes speed up filtered queries and only work in server mode.
+        if self._url:
+            from qdrant_client.models import PayloadSchemaType
+            for field in ("source", "project", "role", "session_id", "category"):
+                try:
+                    client.create_payload_index(
+                        collection_name=COLLECTION,
+                        field_name=field,
+                        field_schema=PayloadSchemaType.KEYWORD,
+                    )
+                except Exception:
+                    pass  # index already exists — safe to ignore
 
     # ------------------------------------------------------------------
     # Write

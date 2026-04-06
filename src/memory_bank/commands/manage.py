@@ -32,11 +32,18 @@ def stats(db):
     except DatabaseLockedError as exc:
         raise click.ClickException(str(exc)) from exc
 
+    mode_label = (
+        f"[green]server[/green] [dim]({db_obj._url})[/dim]"
+        if db_obj._url
+        else "[dim]embedded[/dim]"
+    )
+
     info = Table.grid(padding=(0, 2))
     info.add_column(style="dim")
     info.add_column()
     info.add_row("DB path", str(s["db_path"]))
     info.add_row("Collection", s["collection"])
+    info.add_row("Qdrant mode", mode_label)
     info.add_row("Embedding model", s["embedding_model"])
     info.add_row("Total messages", f"[bold cyan]{s['total_messages']}[/bold cyan]")
 
