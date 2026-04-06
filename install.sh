@@ -7,6 +7,8 @@ set -e
 
 REPO_URL="https://github.com/jdelgadoperez/memory-bank"
 INSTALL_DIR="${MEMORY_BANK_DIR:-$HOME/.local/share/memory-bank}"
+BIN_DIR="$HOME/.local/bin"
+BIN_PATH="$BIN_DIR/memory-bank"
 
 # ── 1. Clone or update ────────────────────────────────────────────────────────
 if [ -d "$INSTALL_DIR/.git" ]; then
@@ -20,22 +22,38 @@ fi
 cd "$INSTALL_DIR"
 
 # ── 2. Install dependencies ───────────────────────────────────────────────────
-if command -v uv >/dev/null 2>&1; then
-  echo "→ Installing with uv"
-  uv sync
-  uv pip install -e ".[mcp]"
-else
+if ! command -v uv >/dev/null 2>&1; then
   echo "uv not found. Install it first: https://docs.astral.sh/uv/getting-started/installation/"
   exit 1
 fi
 
-# ── 3. Wire Claude Code integration ──────────────────────────────────────────
-echo "→ Installing Claude Code hooks, skills, and MCP server"
-memory-bank setup install --on recommended
+echo "→ Installing with uv"
+uv sync --extra mcp
 
-# ── 4. Initial ingest ─────────────────────────────────────────────────────────
+# ── 3. Symlink binary so 'memory-bank' works from any shell ──────────────────
+echo "→ Linking memory-bank to $BIN_PATH"
+mkdir -p "$BIN_DIR"
+ln -sf "$INSTALL_DIR/.venv/bin/memory-bank" "$BIN_PATH"
+
+# Warn if ~/.local/bin is not on PATH
+case ":$PATH:" in
+  *":$BIN_DIR:"*) ;;
+  *)
+    echo ""
+    echo "  ⚠ $BIN_DIR is not in your PATH."
+    echo "  Add this to your shell profile (~/.zshrc or ~/.bashrc) and restart your terminal:"
+    echo "    export PATH=\"\$HOME/.local/bin:\$PATH\""
+    echo ""
+    ;;
+esac
+
+# ── 4. Wire Claude Code integration ──────────────────────────────────────────
+echo "→ Installing Claude Code hooks, skills, and MCP server"
+"$BIN_PATH" setup install --on recommended
+
+# ── 5. Initial ingest ─────────────────────────────────────────────────────────
 echo "→ Ingesting existing Claude Code history"
-memory-bank ingest claude-code
+"$BIN_PATH" ingest claude-code
 
 echo ""
 echo "✓ memory-bank is ready!"
