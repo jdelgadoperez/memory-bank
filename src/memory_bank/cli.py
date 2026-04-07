@@ -95,18 +95,20 @@ ROLE_STYLES = {
 }
 
 
+def _get_version() -> str:
+    try:
+        return importlib.metadata.version("memory-bank")
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
+
+
 # ---------------------------------------------------------------------------
 # Root group
 # ---------------------------------------------------------------------------
 
 
 @click.group(context_settings=CONTEXT_SETTINGS, invoke_without_command=True)
-@click.version_option(
-    importlib.metadata.version("memory-bank"),
-    "--version",
-    "-V",
-    prog_name="memory-bank",
-)
+@click.version_option(None, "--version", "-V", package_name="memory-bank", prog_name="memory-bank")
 @click.pass_context
 def cli(ctx):
     """[bold magenta]memory-bank[/bold magenta] — your local semantic memory for Claude chat histories.
@@ -117,7 +119,7 @@ def cli(ctx):
     if ctx.invoked_subcommand is None:
         banner = Text.assemble(
             ("memory-bank", "bold magenta"),
-            (f"  v{importlib.metadata.version('memory-bank')}\n", "dim"),
+            (f"  v{_get_version()}\n", "dim"),
             ("Search and ingest Claude chat histories into a local vector DB.", "italic"),
         )
         console.print(Panel(banner, border_style="magenta", padding=(0, 2)))
