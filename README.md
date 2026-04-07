@@ -53,8 +53,6 @@ memory-bank stats
 
 **Note:** On first ingest, `BAAI/bge-small-en-v1.5` embedding model (~25 MB) downloads once from HuggingFace and runs fully offline after.
 
-> **macOS troubleshooting:** If `uv sync` fails with an `onnxruntime` error, try `pip install onnxruntime` separately to let pip pick a compatible wheel.
-
 ---
 
 ## Configuration
