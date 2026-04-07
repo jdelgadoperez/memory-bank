@@ -6,7 +6,12 @@ from pathlib import Path
 import rich_click as click
 from rich.console import Console
 from rich.panel import Panel
-from rich.progress import BarColumn, MofNCompleteColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+from rich.progress import (
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeElapsedColumn,
+)
 from rich.text import Text
 
 # ---------------------------------------------------------------------------
@@ -265,5 +270,13 @@ def _run_ingest(ingestor, db_path: Path | None = None, _drain: bool = True):
 # Register command groups
 # ---------------------------------------------------------------------------
 
-from memory_bank.commands import ingest, search, manage, hooks, mcp, setup, update  # noqa: E402, F401
+from memory_bank.commands import (  # noqa: E402, F401
+    hooks,
+    ingest,
+    manage,
+    mcp,
+    search,
+    setup,
+    update,
+)
 from memory_bank.ui import server  # noqa: E402, F401

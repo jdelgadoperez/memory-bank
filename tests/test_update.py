@@ -48,6 +48,7 @@ class TestDetectInstallDir:
 class TestUpdateCommand:
     def test_fails_when_install_dir_not_found(self):
         from click.testing import CliRunner
+
         from memory_bank.cli import cli
         with patch("memory_bank.commands.update._detect_install_dir", return_value=None):
             result = CliRunner().invoke(cli, ["update"])
@@ -55,16 +56,19 @@ class TestUpdateCommand:
 
     def test_fails_when_not_git_repo(self):
         from click.testing import CliRunner
+
         from memory_bank.cli import cli
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("memory_bank.commands.update._detect_install_dir", return_value=Path(tmpdir)):
-                result = CliRunner().invoke(cli, ["update"])
+        with tempfile.TemporaryDirectory() as tmpdir, patch(
+            "memory_bank.commands.update._detect_install_dir", return_value=Path(tmpdir)
+        ):
+            result = CliRunner().invoke(cli, ["update"])
         assert result.exit_code != 0
         output = result.output.lower()
         assert "git repository" in output or "not a git" in output or "error" in output
 
     def test_runs_git_pull_and_uv_sync(self):
         from click.testing import CliRunner
+
         from memory_bank.cli import cli
         with tempfile.TemporaryDirectory() as tmpdir:
             repo = Path(tmpdir)
@@ -74,10 +78,10 @@ class TestUpdateCommand:
             subprocess_module.run(["git", "commit", "--allow-empty", "-m", "init"],
                                    cwd=str(repo), check=True, capture_output=True, env=env)
             mock_run = MagicMock(return_value=MagicMock(returncode=0, stdout="Already up to date.\n", stderr=""))
-            with patch("memory_bank.commands.update._detect_install_dir", return_value=repo):
-                with patch("memory_bank.commands.update.subprocess.run", mock_run):
-                    with patch("memory_bank.commands.update._available_skills", return_value=[]):
-                        result = CliRunner().invoke(cli, ["update"])
+            with patch("memory_bank.commands.update._detect_install_dir", return_value=repo), \
+                    patch("memory_bank.commands.update.subprocess.run", mock_run), \
+                    patch("memory_bank.commands.update._available_skills", return_value=[]):
+                result = CliRunner().invoke(cli, ["update"])
             assert result.exit_code == 0
             calls = [str(c) for c in mock_run.call_args_list]
             assert any("pull" in c for c in calls)
