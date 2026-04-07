@@ -176,7 +176,12 @@ def _run_ingest(ingestor, db_path: Path | None = None, _drain: bool = True):
         return result
 
     router = resolve_router(db_path=db_path)
-    route_label = "via UI server" if type(router).__name__ == "HttpRouter" else "direct"
+    if type(router).__name__ == "HttpRouter":
+        route_label = "via UI server"
+    elif getattr(getattr(router, "_db", None), "_url", None):
+        route_label = "server (Docker)"
+    else:
+        route_label = "embedded"
     console.print(f"[dim]Ingest mode: {route_label}[/dim]")
 
     from .categorizer import categorize
