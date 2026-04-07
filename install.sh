@@ -11,12 +11,14 @@ BIN_DIR="$HOME/.local/bin"
 BIN_PATH="$BIN_DIR/memory-bank"
 
 # ── 1. Clone or update ────────────────────────────────────────────────────────
+IS_FRESH_INSTALL=0
 if [ -d "$INSTALL_DIR/.git" ]; then
   echo "→ Updating existing install at $INSTALL_DIR"
   git -C "$INSTALL_DIR" pull --ff-only
 else
   echo "→ Cloning memory-bank to $INSTALL_DIR"
   git clone "$REPO_URL" "$INSTALL_DIR"
+  IS_FRESH_INSTALL=1
 fi
 
 cd "$INSTALL_DIR"
@@ -48,8 +50,13 @@ case ":$PATH:" in
 esac
 
 # ── 4. Wire Claude Code integration ──────────────────────────────────────────
-echo "→ Installing Claude Code hooks, skills, and MCP server"
-"$BIN_PATH" setup install --on recommended
+if [ "$IS_FRESH_INSTALL" = "1" ]; then
+  echo "→ Installing Claude Code hooks, skills, and MCP server"
+  "$BIN_PATH" setup install --on recommended
+else
+  echo "→ Refreshing skills (hooks and MCP config preserved)"
+  "$BIN_PATH" setup install --skip-hooks
+fi
 
 # ── 5. Initial ingest ─────────────────────────────────────────────────────────
 echo "→ Ingesting existing Claude Code history"
