@@ -52,12 +52,21 @@ def get_db_path() -> Path:
 # ---------------------------------------------------------------------------
 
 def _ping_qdrant(url: str = QDRANT_DOCKER_URL, timeout: float = 1.0) -> bool:
-    """Return True if a Qdrant server is reachable at *url*/health."""
-    try:
-        urllib.request.urlopen(f"{url}/health", timeout=timeout)
-        return True
-    except Exception:
-        return False
+    """Return True if a Qdrant server is reachable at *url*.
+
+    Tries /healthz first (Qdrant 1.x+), then falls back to the root endpoint
+    for older versions where /healthz does not exist.
+    """
+    for path in ("/healthz", "/"):
+        try:
+            urllib.request.urlopen(f"{url}{path}", timeout=timeout)
+            return True
+        except urllib.error.HTTPError:
+            # Server responded but with an error status — keep trying other paths.
+            pass
+        except Exception:
+            return False
+    return False
 
 
 def _docker_daemon_running() -> bool:

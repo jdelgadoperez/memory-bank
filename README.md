@@ -216,7 +216,7 @@ Launches a local web UI to browse and search your memory bank. When run without 
 
 | Option                    | Description                                    |
 | ------------------------- | ---------------------------------------------- |
-| `-p PORT` / `--port PORT` | Port to listen on (default: 6333)              |
+| `-p PORT` / `--port PORT` | Port to listen on (default: 8080)              |
 | `-B` / `--no-browser`     | Start the server without opening a browser tab |
 | `--db PATH`               | Use an alternate DB path                       |
 

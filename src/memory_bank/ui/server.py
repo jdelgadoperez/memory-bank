@@ -424,10 +424,10 @@ loadStats().then(()=>loadSessions());
 @cli.group(context_settings=CONTEXT_SETTINGS, invoke_without_command=True)
 @click.option(
     "--port", "-p",
-    default=6333,
+    default=8080,
     show_default=True,
     metavar="PORT",
-    help="Local port for the web UI.",
+    help="Local port for the web UI. Defaults to 8080 to avoid conflicting with Qdrant (6333).",
 )
 @click.option(
     "--no-browser", "-B",

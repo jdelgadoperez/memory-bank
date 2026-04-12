@@ -61,10 +61,28 @@ class HttpRouter(IngestRouter):
 
 
 def resolve_router(db_path: Path | None = None) -> IngestRouter:
-    """Return an HttpRouter if the UI server is alive, otherwise a DirectRouter."""
+    """Return the appropriate router for ingest upserts.
+
+    When a Qdrant server (Docker or external) is reachable, use DirectRouter so
+    ingest connects to it directly. Multiple clients can safely share a Qdrant
+    server, so there is no need to round-trip through the UI server.
+
+    HttpRouter is only used when no Qdrant server is reachable (embedded mode)
+    AND the UI server is running — in that case routing through the UI avoids
+    embedded Qdrant file-lock contention between the two processes.
+    """
+    from .db import _ping_qdrant, QDRANT_DOCKER_URL
+
+    # Qdrant server is available — connect directly, skip the UI server.
+    if _ping_qdrant(QDRANT_DOCKER_URL):
+        return DirectRouter(db_path=db_path)
+
+    # Embedded mode: route through the UI server if it is running to avoid
+    # holding the embedded Qdrant file lock in two processes simultaneously.
     ui_info = _detect_running_ui()
     if ui_info is not None:
         return HttpRouter(base_url=ui_info)
+
     return DirectRouter(db_path=db_path)
 
 
