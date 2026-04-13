@@ -18,7 +18,7 @@ def _ui_url(port: int) -> str:
 
     try:
         socket.getaddrinfo(_LOCAL_DOMAIN, port, socket.AF_INET)
-        return f"http://{_LOCAL_DOMAIN}"
+        return f"http://{_LOCAL_DOMAIN}:{port}"
     except socket.gaierror:
         return f"http://localhost:{port}"
 
