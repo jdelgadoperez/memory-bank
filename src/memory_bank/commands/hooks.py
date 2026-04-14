@@ -409,17 +409,16 @@ def recall(db):
     except Exception:
         pass
 
-    # Search with timeout
-    db_obj = MemoryDB(Path(db) if db else None)
+    # Search with timeout — MemoryDB init included so Docker/Qdrant connection
+    # attempts are also bounded by the timeout, not just the search itself.
+    db_path = Path(db) if db else None
+
+    def _search():
+        return MemoryDB(db_path).search(query=query, limit=10, project=project)
 
     with ThreadPoolExecutor(max_workers=1) as pool:
         try:
-            results = pool.submit(
-                db_obj.search,
-                query=query,
-                limit=10,
-                project=project,
-            ).result(timeout=1.0)
+            results = pool.submit(_search).result(timeout=2.0)
         except FuturesTimeoutError:
             return
         except Exception as exc:

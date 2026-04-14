@@ -73,7 +73,7 @@ def _docker_daemon_running() -> bool:
     """Return True if the Docker daemon is available on this machine."""
     try:
         r = subprocess.run(
-            ["docker", "info"], capture_output=True, timeout=5
+            ["docker", "info"], capture_output=True, timeout=2
         )
         return r.returncode == 0
     except Exception:
@@ -242,7 +242,7 @@ class MemoryDB:
     def _connect(self) -> Generator[QdrantClient, None, None]:
         """Acquire the Qdrant client for the duration of an operation."""
         if self._url:
-            client = QdrantClient(url=self._url)
+            client = QdrantClient(url=self._url, timeout=3)
         else:
             # Embedded mode — intercept the 20k UserWarning and surface it cleanly
             with warnings.catch_warnings(record=True) as caught:
