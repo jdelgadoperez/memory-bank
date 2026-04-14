@@ -170,17 +170,17 @@ def hooks():
     "--on",
     "trigger",
     type=click.Choice(["stop", "start", "precompact", "recall", "both", "recommended", "all"]),
-    default="stop",
+    default="all",
     show_default=True,
     help=(
         "Which Claude Code hook event to attach to.\n\n"
-        "stop        = after each session ends \u2014 runs ingest (recommended)\n"
+        "stop        = after each session ends \u2014 runs ingest\n"
         "start       = when a new session begins \u2014 writes a context summary\n"
         "precompact  = before context compaction \u2014 captures full transcript\n"
         "recall      = before each prompt \u2014 injects relevant past context\n"
         "both        = stop + start\n"
         "recommended = stop + recall\n"
-        "all         = stop + start + precompact + recall"
+        "all         = stop + start + precompact + recall (default)"
     ),
 )
 @click.option(
