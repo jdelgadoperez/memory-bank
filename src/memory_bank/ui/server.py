@@ -618,7 +618,17 @@ def ui(ctx, port, no_browser, db):
                 self.send_response(404)
                 self.end_headers()
 
-    server = HTTPServer(("127.0.0.1", port), Handler)
+    try:
+        server = HTTPServer(("127.0.0.1", port), Handler)
+    except OSError as exc:
+        if exc.errno == 48:  # Address already in use
+            console.print(
+                f"[bold red]Error:[/bold red] Port {port} is already in use.\n"
+                f"[dim]Try [cyan]memory-bank ui stop[/cyan] to stop a background server, "
+                f"or use [cyan]--port[/cyan] to pick a different port.[/dim]"
+            )
+            return
+        raise
     url = _ui_url(port)
     console.print(
         f"[bold magenta]Memory Bank UI[/bold magenta]  [cyan]{url}[/cyan]"

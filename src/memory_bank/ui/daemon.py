@@ -49,8 +49,9 @@ def _is_pid_alive(pid: int) -> bool:
 
 def _register_daemon_commands(ui_group):
     @ui_group.command("start", context_settings=CONTEXT_SETTINGS)
+    @click.option("--port", "-p", type=int, default=None, help="Override the UI port.")
     @click.pass_context
-    def ui_start(ctx):
+    def ui_start(ctx, port):
         """Start the UI server in the background.
 
         Spawns a detached process and writes its PID to
@@ -65,7 +66,7 @@ def _register_daemon_commands(ui_group):
         import shutil
         import subprocess
 
-        port = ctx.obj["port"]
+        port = port if port is not None else ctx.obj["port"]
         db = ctx.obj["db"]
 
         existing = _read_ui_pid()
@@ -135,11 +136,12 @@ def _register_daemon_commands(ui_group):
         )
 
     @ui_group.command("restart", context_settings=CONTEXT_SETTINGS)
+    @click.option("--port", "-p", type=int, default=None, help="Override the UI port.")
     @click.pass_context
-    def ui_restart(ctx):
+    def ui_restart(ctx, port):
         """Restart the background UI server."""
         ctx.invoke(ui_stop)
-        ctx.invoke(ui_start)
+        ctx.invoke(ui_start, port=port)
 
     @ui_group.command("status", context_settings=CONTEXT_SETTINGS)
     def ui_status():
@@ -160,8 +162,9 @@ def _register_daemon_commands(ui_group):
             _UI_PID_FILE.unlink(missing_ok=True)
 
     @ui_group.command("dev", context_settings=CONTEXT_SETTINGS)
+    @click.option("--port", "-p", type=int, default=None, help="Override the UI port.")
     @click.pass_context
-    def ui_dev(ctx):
+    def ui_dev(ctx, port):
         """Run the UI with auto-reload on source changes.
 
         Watches the memory_bank source directory and restarts the background
@@ -189,7 +192,7 @@ def _register_daemon_commands(ui_group):
         # Suppress browser opens during dev — restarts should be silent
         ctx.obj["no_browser"] = True
         ctx.invoke(ui_stop)
-        ctx.invoke(ui_start)
+        ctx.invoke(ui_start, port=port)
 
         try:
             for changes in watch(src_dir, watch_filter=lambda _, path: path.endswith(".py")):
@@ -198,6 +201,6 @@ def _register_daemon_commands(ui_group):
                     f"\n[yellow]Changed:[/yellow] {', '.join(changed_files)}"
                 )
                 ctx.invoke(ui_stop)
-                ctx.invoke(ui_start)
+                ctx.invoke(ui_start, port=port)
         except KeyboardInterrupt:
             console.print("\n[dim]Dev mode stopped.[/dim]")
