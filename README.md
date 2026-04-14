@@ -65,7 +65,29 @@ All settings are controlled via environment variables. You can set them in your 
 | `CLAUDE_PROJECTS_DIR` | `~/.claude/projects`                   | Path to Claude Code session logs               |
 | `CLAUDE_DESKTOP_PATH` | `~/Library/Application Support/Claude` | Path to Claude Desktop app data                |
 | `ANTHROPIC_API_KEY`   | —                                      | Required only for the interactive search agent |
-| `MEMORY_BANK_RECALL`  | —                                      | Set to `0` to temporarily disable the recall (UserPromptSubmit) hook |
+| `MEMORY_BANK_RECALL`  | —                                      | Set to `0` to disable the recall (UserPromptSubmit) hook |
+| `QDRANT_URL`          | —                                      | Override the Qdrant server URL (e.g. `http://localhost:6333`). Skips Docker auto-start. |
+
+### Slow commands / commands hanging
+
+If memory-bank commands hang or feel slow, it is usually because the Qdrant health check
+and Docker daemon probe run on startup. Each has a short timeout, but on some machines
+(e.g. Apple Silicon with Docker not running) the probes still add a few seconds of latency.
+
+**Option 1 — disable the recall hook** (fastest, no DB access on every prompt):
+```bash
+export MEMORY_BANK_RECALL=0
+```
+
+**Option 2 — point directly at a running Qdrant server** (skips Docker probing):
+```bash
+export QDRANT_URL=http://localhost:6333
+```
+
+**Option 3 — run `mb update` when commands are hanging** (e.g. after a fresh install before Qdrant has started):
+```bash
+MEMORY_BANK_RECALL=0 mb update
+```
 
 ### Example: custom DB location
 
