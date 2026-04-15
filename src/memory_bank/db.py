@@ -52,21 +52,31 @@ def get_db_path() -> Path:
 # ---------------------------------------------------------------------------
 
 def _ping_qdrant(url: str = QDRANT_DOCKER_URL, timeout: float = 1.0) -> bool:
-    """Return True if a Qdrant server is reachable at *url*.
+    """Return True if a genuine Qdrant server is reachable at *url*.
 
-    Tries /healthz first (Qdrant 1.x+), then falls back to the root endpoint
-    for older versions where /healthz does not exist.
+    Validates the response body to ensure it is actually Qdrant, not some other
+    HTTP server that happens to be listening on the same port (e.g. a Python
+    http.server that would accept GET / but reject qdrant_client PUT requests
+    with 501).
     """
-    for path in ("/healthz", "/"):
-        try:
-            urllib.request.urlopen(f"{url}{path}", timeout=timeout)
+    # /healthz (Qdrant 1.x+) returns the literal text "healthz check passed"
+    try:
+        response = urllib.request.urlopen(f"{url}/healthz", timeout=timeout)
+        body = response.read(64)
+        if b"healthz" in body.lower():
             return True
-        except urllib.error.HTTPError:
-            # Server responded but with an error status — keep trying other paths.
-            pass
-        except Exception:
-            return False
-    return False
+    except urllib.error.HTTPError:
+        pass  # endpoint absent on older Qdrant; fall through to root check
+    except Exception:
+        return False
+
+    # Root endpoint returns {"title":"qdrant - vector search engine", ...}
+    try:
+        response = urllib.request.urlopen(f"{url}/", timeout=timeout)
+        body = response.read(256)
+        return b"qdrant" in body.lower()
+    except Exception:
+        return False
 
 
 def _docker_daemon_running() -> bool:
