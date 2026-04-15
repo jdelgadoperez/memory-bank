@@ -557,6 +557,9 @@ class MemoryDB:
                 if offset is None:
                     break
 
+        if not self._embedder_loaded:
+            self._embedder = _load_embedder()
+            self._embedder_loaded = True
         embedding_status = "neural (BAAI/bge-small-en-v1.5)" if self._embedder else "hash-based fallback (offline)"
         return {
             "total_messages": count,
