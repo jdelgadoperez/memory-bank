@@ -35,52 +35,38 @@ def _detect_install_dir(executable: str | None = None) -> Path | None:
     return candidate
 
 
-@cli.command(context_settings=CONTEXT_SETTINGS)
-@click.option(
-    "--dir",
-    "install_dir",
-    type=click.Path(),
-    default=None,
-    metavar="DIR",
-    help="Override the install directory. Auto-detected from the running binary by default.",
-)
-def update(install_dir: str | None) -> None:
-    """Pull the latest code and sync dependencies.
-
-    Detects the install directory from the running binary, runs
-    [dim]git pull --ff-only[/dim] and [dim]uv sync[/dim], then refreshes
-    skill symlinks. Existing hook and MCP configuration is preserved.
-
-    \b
-    Examples:
-      memory-bank update
-      memory-bank update --dir ~/.local/share/memory-bank
-    """
-    resolved_dir: Path | None = (
-        Path(install_dir).expanduser().resolve() if install_dir else _detect_install_dir()
-    )
-
-    if resolved_dir is None:
-        raise click.ClickException(
-            "Could not detect the memory-bank install directory from the running Python binary. "
-            "Pass --dir explicitly: memory-bank update --dir ~/.local/share/memory-bank"
-        )
-
-    if not resolved_dir.is_dir():
-        raise click.ClickException(f"Install directory does not exist: {resolved_dir}")
-
-    if not (resolved_dir / ".git").is_dir():
+def _print_version_result(before: str, after: str) -> None:
+    if before != after:
         console.print(
-            "[yellow]This install was not set up via install.sh (no .git directory found).[/yellow]\n"
-            "If you installed with [bold]uv tool install[/bold], update with:\n\n"
-            "  [bold]uv tool upgrade memory-bank[/bold]\n"
+            f"[bold green]✓ Updated[/bold green]  "
+            f"[dim]v{before}[/dim] → [bold]v{after}[/bold]"
         )
-        raise click.ClickException(
-            "Cannot auto-update a non-git install. Run the command above instead."
-        )
+    else:
+        console.print(f"[bold green]✓ Already up to date[/bold green]  [dim]v{after}[/dim]")
 
-    before_version = _current_version()
-    console.print(f"[bold]memory-bank update[/bold]  [dim](current: v{before_version})[/dim]")
+
+def _update_uv_tool(before_version: str) -> None:
+    console.print("[dim]Detected uv tool install — running uv tool upgrade[/dim]\n")
+    console.print("[bold]Upgrading package[/bold]")
+    upgrade = subprocess.run(
+        ["uv", "tool", "upgrade", "memory-bank"],
+        capture_output=True,
+        text=True,
+    )
+    if upgrade.returncode != 0:
+        console.print(f"[red]{upgrade.stderr.strip()}[/red]")
+        raise click.ClickException("uv tool upgrade failed — see above for details.")
+    output = (upgrade.stdout + upgrade.stderr).strip()
+    if output:
+        console.print(f"  [dim]{output}[/dim]")
+
+    after_version = _current_version()
+    console.print()
+    _print_version_result(before_version, after_version)
+    console.print("\n  Hooks and MCP configuration were not changed.")
+
+
+def _update_git(resolved_dir: Path) -> None:
     console.print(f"[dim]Install directory: {resolved_dir}[/dim]\n")
 
     console.print("[bold]Pulling latest code[/bold]")
@@ -129,15 +115,55 @@ def update(install_dir: str | None) -> None:
     else:
         console.print("  [dim]No skills found (non-editable install?)[/dim]")
 
+
+@cli.command(context_settings=CONTEXT_SETTINGS)
+@click.option(
+    "--dir",
+    "install_dir",
+    type=click.Path(),
+    default=None,
+    metavar="DIR",
+    help="Override the install directory. Auto-detected from the running binary by default.",
+)
+def update(install_dir: str | None) -> None:
+    """Update memory-bank to the latest version.
+
+    Detects the install type automatically:
+
+    \b
+    - git-based install (install.sh): runs git pull + uv sync, refreshes skills
+    - uv tool install: runs uv tool upgrade memory-bank
+
+    Existing hook and MCP configuration is preserved in both cases.
+
+    \b
+    Examples:
+      memory-bank update
+      memory-bank update --dir ~/.local/share/memory-bank
+    """
+    resolved_dir: Path | None = (
+        Path(install_dir).expanduser().resolve() if install_dir else _detect_install_dir()
+    )
+
+    if resolved_dir is None:
+        raise click.ClickException(
+            "Could not detect the memory-bank install directory from the running Python binary. "
+            "Pass --dir explicitly: memory-bank update --dir ~/.local/share/memory-bank"
+        )
+
+    if not resolved_dir.is_dir():
+        raise click.ClickException(f"Install directory does not exist: {resolved_dir}")
+
+    before_version = _current_version()
+    console.print(f"[bold]memory-bank update[/bold]  [dim](current: v{before_version})[/dim]\n")
+
+    if not (resolved_dir / ".git").is_dir():
+        _update_uv_tool(before_version)
+        return
+
+    _update_git(resolved_dir)
+
     after_version = _current_version()
     console.print()
-    if before_version != after_version:
-        console.print(
-            f"[bold green]✓ Updated[/bold green]  "
-            f"[dim]v{before_version}[/dim] → [bold]v{after_version}[/bold]"
-        )
-    else:
-        console.print(
-            f"[bold green]✓ Already up to date[/bold green]  [dim]v{after_version}[/dim]"
-        )
+    _print_version_result(before_version, after_version)
     console.print("\n  Hooks and MCP configuration were not changed.")
