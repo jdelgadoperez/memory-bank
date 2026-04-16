@@ -41,7 +41,7 @@ def _is_editable_install() -> bool:
     """
     # commands/ -> memory_bank/ -> src/ -> repo root
     root = Path(__file__).resolve().parent.parent.parent.parent
-    return (root / "skills").is_dir() or (root / "pyproject.toml").is_file()
+    return (root / "pyproject.toml").is_file()
 
 
 def _skills_source_dir() -> Path | None:
