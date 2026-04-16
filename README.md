@@ -23,7 +23,7 @@ Installs `uv` if needed, runs `uv tool install memory-bank`, wires Claude Code h
 
 ```bash
 uv tool install memory-bank
-memory-bank setup install --on recommended
+memory-bank setup install
 memory-bank ingest claude-code
 ```
 
@@ -37,7 +37,7 @@ cd memory-bank
 uv sync
 mkdir -p ~/.local/bin
 ln -sf "$PWD/.venv/bin/memory-bank" ~/.local/bin/memory-bank
-memory-bank setup install --on recommended
+memory-bank setup install
 memory-bank ingest claude-code
 ```
 
@@ -114,6 +114,7 @@ export CLAUDE_PROJECTS_DIR=/Volumes/external/claude-projects
 ```bash
 memory-bank ingest claude-code [--path PATH] [--db PATH]
 memory-bank ingest claude-desktop --path PATH [--db PATH]
+memory-bank ingest chatgpt --path PATH [--db PATH]
 memory-bank ingest all [--db PATH]
 memory-bank ingest custom                         # prints Python API usage
 ```
@@ -272,7 +273,7 @@ Requires the dev extras: `uv sync --extra dev` (installs `watchfiles`). Press Ct
 
 ### Hooks
 
-Hooks are installed automatically by `memory-bank setup install` (recommended: `stop` + `recall`). To manage them separately:
+Hooks are installed automatically by `memory-bank setup install` (default: `stop` hook). To manage them separately or install additional hooks:
 
 ```bash
 memory-bank hooks status               # check what's installed
@@ -309,6 +310,7 @@ Pulls the latest changes and refreshes skills. For `uv tool install` installs, r
 | ---------------- | ------------------------------------- | --------------------- |
 | `claude-code`    | All Claude Code sessions (`*.jsonl`)  | `~/.claude/projects/` |
 | `claude-desktop` | Exported Claude Desktop conversations | _(requires `--path`)_ |
+| `chatgpt`        | ChatGPT data export (`conversations.json` or directory) | _(requires `--path`)_ |
 | Custom           | Any JSON/JSONL via a mapper function  | _(Python API only)_   |
 
 ---
