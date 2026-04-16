@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import importlib.metadata
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -114,19 +113,16 @@ def _update_git(resolved_dir: Path, before_version: str = "") -> None:
     console.print("\n[bold]Refreshing skills[/bold]")
     skills = _available_skills()
     if skills:
+        from memory_bank.commands.setup import _install_skill, _is_editable_install
+
+        editable = _is_editable_install()
         _SKILLS_TARGET.mkdir(parents=True, exist_ok=True)
         for name, skill_path in skills:
-            target = _SKILLS_TARGET / name
-            if target.is_symlink():
-                if Path(os.readlink(target)).resolve() == skill_path.resolve():
-                    console.print(f"  [dim]{name} — already up to date[/dim]")
-                    continue
-                target.unlink()
-            elif target.exists():
-                console.print(f"  [yellow]{name} — exists but is not a symlink, skipping[/yellow]")
-                continue
-            target.symlink_to(skill_path)
-            console.print(f"  [bold green]Refreshed:[/bold green] {name}")
+            result = _install_skill(name, skill_path, editable)
+            if result is None:
+                console.print(f"  [dim]{name} — already up to date[/dim]")
+            else:
+                console.print(f"  {result}")
     else:
         console.print("  [dim]No skills found (non-editable install?)[/dim]")
 
