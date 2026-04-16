@@ -76,9 +76,9 @@ export MEMORY_BANK_RECALL=0
 export QDRANT_URL=http://localhost:6333
 ```
 
-**Option 3 — run `mb update` when commands are hanging** (e.g. after a fresh install before Qdrant has started):
+**Option 3 — run `memory-bank update` when commands are hanging** (e.g. after a fresh install before Qdrant has started):
 ```bash
-MEMORY_BANK_RECALL=0 mb update
+MEMORY_BANK_RECALL=0 memory-bank update
 ```
 
 ### Example: custom DB location
@@ -126,6 +126,14 @@ Export your conversations from Claude Desktop (Settings → Data & Privacy → E
 
 ```bash
 memory-bank ingest claude-desktop --path ~/Downloads/conversations.json
+```
+
+#### ChatGPT
+
+Export your ChatGPT history from [chat.openai.com](https://chat.openai.com) → Settings → Data controls → Export data. You'll receive a zip containing `conversations.json`.
+
+```bash
+memory-bank ingest chatgpt --path ~/Downloads/conversations.json
 ```
 
 #### Ingest all sources at once
@@ -260,7 +268,7 @@ PID is written to `~/.memory-bank/ui.pid`, logs to `~/.memory-bank/ui.log`.
 memory-bank ui dev               # watches src/ and restarts on .py changes
 ```
 
-Requires the dev extras: `uv pip install -e '.[dev]'` (installs `watchfiles`). Press Ctrl+C to stop.
+Requires the dev extras: `uv sync --extra dev` (installs `watchfiles`). Press Ctrl+C to stop.
 
 ### Hooks
 
@@ -282,8 +290,16 @@ Hooks run in the background and log to `~/.memory-bank/ingest.log`. Re-running `
 | `precompact` | Ensure full transcript is captured before Claude Code prunes context |
 | `recall` | Before each prompt, search history and inject relevant context. Disable with `MEMORY_BANK_RECALL=0` |
 | `both` | Stop + SessionStart |
-| `recommended` | Stop + UserPromptSubmit (default from `setup install`) |
+| `recommended` | Stop + UserPromptSubmit |
 | `all` | Stop + SessionStart + PreCompact + UserPromptSubmit |
+
+### Update
+
+```bash
+memory-bank update [--dir DIR]
+```
+
+Pulls the latest changes and refreshes skills. For `uv tool install` installs, runs `uv tool upgrade memory-bank`. For clone-based installs, runs `git pull` + `uv sync`. Pass `--dir` to specify a custom clone path.
 
 ---
 
@@ -407,10 +423,15 @@ src/memory_bank/
 │   ├── manage.py          stats + delete commands
 │   ├── hooks.py           hooks install/uninstall/status
 │   ├── setup.py           setup install/uninstall/status
+│   ├── update.py          update command (uv tool upgrade or git pull)
+│   ├── _recall_guard.py   recall hook logic and skip patterns
 │   └── mcp.py             mcp command
 ├── ui/
 │   ├── server.py          HTML template + HTTP server + ui group command
 │   └── daemon.py          background daemon (start/stop/restart/status/dev)
+├── skills/
+│   ├── memory-search/SKILL.md  Semantic search skill
+│   └── memory-recall/SKILL.md  Full session context retrieval skill
 └── ingestors/
     ├── base.py            BaseIngestor ABC
     ├── claude_code.py     ~/.claude/projects/**/*.jsonl
@@ -419,9 +440,6 @@ src/memory_bank/
     └── custom.py          Generic mapper-based ingestor
 scripts/
 └── search_agent.py        Agentic search via Anthropic API
-skills/
-├── memory-search/SKILL.md Semantic search skill
-└── memory-recall/SKILL.md Full session context retrieval skill
 .claude-plugin/
 └── plugin.json            Claude Code plugin manifest (auto-discovery)
 hooks/
