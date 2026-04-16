@@ -112,7 +112,7 @@ memory-bank ingest all
 
 ```bash
 memory-bank stats
-memory-bank ui           # web UI at http://localhost:6333
+memory-bank ui           # web UI at http://localhost:8080
 memory-bank hooks install    # auto-ingest after each session
 memory-bank hooks status
 ```
@@ -120,7 +120,7 @@ memory-bank hooks status
 ## Web UI
 
 ```bash
-memory-bank ui           # opens http://localhost:6333
+memory-bank ui           # opens http://localhost:8080
 memory-bank ui --port 8080
 ```
 

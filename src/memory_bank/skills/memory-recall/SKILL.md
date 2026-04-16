@@ -153,4 +153,4 @@ memory-bank search "requirements" --session <session-uuid> --role user --agent
 | Multiple sessions match | Inspect each with `memory-bank session <uuid>` to compare before choosing |
 | "DB locked" error | Another process is ingesting — wait and retry, or check with `memory-bank stats` |
 | Session is very large | Use `--session <uuid>` + `--role` filter to focus; add `--context N` for surrounding messages |
-| Command not found | Run `memory-bank setup install` or check that the venv is activated |
+| Command not found | Run `uv tool install memory-bank && memory-bank setup install`, or ensure `~/.local/bin` is on your PATH |
