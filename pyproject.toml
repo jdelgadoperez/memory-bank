@@ -25,6 +25,9 @@ memory-bank = "memory_bank.cli:cli"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+memory_bank = ["skills/*/SKILL.md"]
+
 [project.optional-dependencies]
 dev = ["ruff>=0.4", "watchfiles>=0.21", "pytest>=8.0"]
 
