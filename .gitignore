@@ -12,3 +12,4 @@ venv/
 .claude/settings.local.json
 docs/superpowers
 .llm/
+.github/hooks/icm.json

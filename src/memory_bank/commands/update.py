@@ -70,9 +70,13 @@ def update(install_dir: str | None) -> None:
         raise click.ClickException(f"Install directory does not exist: {resolved_dir}")
 
     if not (resolved_dir / ".git").is_dir():
+        console.print(
+            "[yellow]This install was not set up via install.sh (no .git directory found).[/yellow]\n"
+            "If you installed with [bold]uv tool install[/bold], update with:\n\n"
+            "  [bold]uv tool upgrade memory-bank --with mcp[/bold]\n"
+        )
         raise click.ClickException(
-            f"{resolved_dir} is not a git repository. "
-            "memory-bank update only works with git-based installs (the default)."
+            "Cannot auto-update a non-git install. Run the command above instead."
         )
 
     before_version = _current_version()

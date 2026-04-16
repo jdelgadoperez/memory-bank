@@ -12,7 +12,16 @@ bash install.sh
 
 Clones the repo, runs `uv sync`, symlinks `memory-bank` to `~/.local/bin/`, wires hooks and MCP server, and runs an initial ingest. After install, `memory-bank` is available as a shell command (ensure `~/.local/bin` is in your `PATH`).
 
-**Manual setup**
+**uv tool install**
+
+```bash
+uv tool install "memory-bank[mcp]"
+memory-bank setup install
+```
+
+The `[mcp]` extra is required for the MCP server. To update: `uv tool upgrade memory-bank --with mcp`
+
+**Manual setup (clone-based)**
 
 ```bash
 uv sync --extra mcp
