@@ -30,7 +30,7 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 
 echo "→ Installing with uv"
-uv sync --extra mcp
+uv sync
 
 # ── 3. Symlink binary so 'memory-bank' works from any shell ──────────────────
 echo "→ Linking memory-bank to $BIN_PATH"

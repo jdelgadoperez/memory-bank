@@ -31,16 +31,12 @@ The installer clones the repo, runs `uv sync`, symlinks `memory-bank` to `~/.loc
 **Option 2 — uv tool install**
 
 ```bash
-uv tool install "memory-bank[mcp]"
+uv tool install memory-bank
 memory-bank setup install --on recommended
 memory-bank ingest claude-code
 ```
 
-The `[mcp]` extra is required — without it, the MCP server (`memory-bank mcp`) won't start. To update later:
-
-```bash
-uv tool upgrade memory-bank --with mcp
-```
+To update later: `uv tool upgrade memory-bank`
 
 **Option 3 — manual setup (clone-based)**
 
@@ -48,7 +44,7 @@ uv tool upgrade memory-bank --with mcp
 # 1. Clone and install
 git clone <repo-url>
 cd memory-bank
-uv sync --extra mcp
+uv sync
 
 # 2. Symlink the CLI so it's available globally
 mkdir -p ~/.local/bin

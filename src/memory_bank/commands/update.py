@@ -73,7 +73,7 @@ def update(install_dir: str | None) -> None:
         console.print(
             "[yellow]This install was not set up via install.sh (no .git directory found).[/yellow]\n"
             "If you installed with [bold]uv tool install[/bold], update with:\n\n"
-            "  [bold]uv tool upgrade memory-bank --with mcp[/bold]\n"
+            "  [bold]uv tool upgrade memory-bank[/bold]\n"
         )
         raise click.ClickException(
             "Cannot auto-update a non-git install. Run the command above instead."
@@ -96,7 +96,7 @@ def update(install_dir: str | None) -> None:
 
     console.print("\n[bold]Syncing dependencies[/bold]")
     sync = subprocess.run(
-        ["uv", "sync", "--extra", "mcp"],
+        ["uv", "sync"],
         cwd=str(resolved_dir),
         capture_output=True,
         text=True,

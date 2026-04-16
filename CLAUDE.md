@@ -15,16 +15,16 @@ Clones the repo, runs `uv sync`, symlinks `memory-bank` to `~/.local/bin/`, wire
 **uv tool install**
 
 ```bash
-uv tool install "memory-bank[mcp]"
+uv tool install memory-bank
 memory-bank setup install
 ```
 
-The `[mcp]` extra is required for the MCP server. To update: `uv tool upgrade memory-bank --with mcp`
+To update: `uv tool upgrade memory-bank`
 
 **Manual setup (clone-based)**
 
 ```bash
-uv sync --extra mcp
+uv sync
 mkdir -p ~/.local/bin
 ln -sf "$PWD/.venv/bin/memory-bank" ~/.local/bin/memory-bank
 memory-bank setup install   # symlinks skills, installs hooks, registers MCP server
