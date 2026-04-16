@@ -6,29 +6,20 @@ Local vector DB for ingesting and searching Claude chat histories. Ask "what did
 
 ## Getting started
 
-**Prerequisites:** Python 3.11+ and [`uv`](https://docs.astral.sh/uv/)
-
 **Option 1 — one-step installer (recommended)**
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/jdelgadoperez/memory-bank/main/install.sh)
 ```
 
-Or clone first and run locally:
-
-```bash
-git clone https://github.com/jdelgadoperez/memory-bank
-bash memory-bank/install.sh
-```
-
-The installer clones the repo, runs `uv sync`, symlinks `memory-bank` to `~/.local/bin/`, wires Claude Code hooks and MCP, and runs an initial ingest. When it finishes, `memory-bank` is available as a shell command.
+Installs `uv` if needed, runs `uv tool install memory-bank`, wires Claude Code hooks and MCP, and runs an initial ingest. No repo clone required. When it finishes, `memory-bank` is available as a shell command.
 
 > **PATH note:** If you see `zsh: command not found: memory-bank` after install, `~/.local/bin` is not in your PATH. Add this to your `~/.zshrc` or `~/.bashrc` and open a new terminal:
 > ```bash
 > export PATH="$HOME/.local/bin:$PATH"
 > ```
 
-**Option 2 — uv tool install**
+**Option 2 — manual**
 
 ```bash
 uv tool install memory-bank
@@ -36,30 +27,7 @@ memory-bank setup install --on recommended
 memory-bank ingest claude-code
 ```
 
-To update later: `uv tool upgrade memory-bank`
-
-**Option 3 — manual setup (clone-based)**
-
-```bash
-# 1. Clone and install
-git clone <repo-url>
-cd memory-bank
-uv sync
-
-# 2. Symlink the CLI so it's available globally
-mkdir -p ~/.local/bin
-ln -sf "$PWD/.venv/bin/memory-bank" ~/.local/bin/memory-bank
-
-# 3. Wire up Claude Code hooks, skills, and MCP
-memory-bank setup install --on recommended
-
-# 4. Ingest your Claude Code history
-memory-bank ingest claude-code
-
-# 5. Search
-memory-bank search "authentication bug fix"
-memory-bank stats
-```
+To update: `memory-bank update`
 
 **Note:** On first ingest, `BAAI/bge-small-en-v1.5` embedding model (~25 MB) downloads once from HuggingFace and runs fully offline after.
 

@@ -7,34 +7,22 @@ Local vector DB for ingesting and searching AI chat histories (Claude Code, Clau
 **One-step installer (recommended)**
 
 ```bash
-bash install.sh
+bash <(curl -fsSL https://raw.githubusercontent.com/jdelgadoperez/memory-bank/main/install.sh)
 ```
 
-Clones the repo, runs `uv sync`, symlinks `memory-bank` to `~/.local/bin/`, wires hooks and MCP server, and runs an initial ingest. After install, `memory-bank` is available as a shell command (ensure `~/.local/bin` is in your `PATH`).
+Installs `uv` if needed, runs `uv tool install memory-bank`, wires hooks and MCP server, and runs an initial ingest. No repo clone required.
 
-**uv tool install**
+**Manual**
 
 ```bash
 uv tool install memory-bank
-memory-bank setup install
+memory-bank setup install --on recommended
+memory-bank ingest claude-code
 ```
 
-To update: `uv tool upgrade memory-bank`
-
-**Manual setup (clone-based)**
-
-```bash
-uv sync
-mkdir -p ~/.local/bin
-ln -sf "$PWD/.venv/bin/memory-bank" ~/.local/bin/memory-bank
-memory-bank setup install   # symlinks skills, installs hooks, registers MCP server
-```
+To update: `memory-bank update`
 
 The `memory-bank` CLI is now available. The Qdrant DB is stored at `~/.memory-bank/qdrant/` by default.
-
-**Claude Code plugin (zero-config)**
-
-The repo ships a `.claude-plugin/plugin.json` manifest. When the repo is open in Claude Code the plugin is auto-discovered — no `setup install` required. The manifest wires `skills/`, `hooks/hooks.json`, and `.mcp.json` automatically.
 
 ## Quick start
 
