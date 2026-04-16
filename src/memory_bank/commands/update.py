@@ -18,16 +18,34 @@ def _current_version() -> str:
         return "unknown"
 
 
-def _detect_uv_tool_install(executable: str | None = None) -> bool:
-    """Return True if running from a uv tool install.
-
-    uv tool installs place a uv-receipt.toml at the tool root alongside
-    pyvenv.cfg. The Python binary lives at <tool-root>/bin/python — without
-    symlink resolution, two parents up from sys.executable is the tool root.
-    """
+def _uv_tool_root(executable: str | None = None) -> Path | None:
+    """Return the uv tool root if running from a uv tool install, else None."""
     exec_path = Path(executable or sys.executable)  # no .resolve() — avoid following pyenv symlinks
     tool_root = exec_path.parent.parent
-    return (tool_root / "uv-receipt.toml").exists()
+    return tool_root if (tool_root / "uv-receipt.toml").exists() else None
+
+
+def _detect_uv_tool_install(executable: str | None = None) -> bool:
+    return _uv_tool_root(executable) is not None
+
+
+def _uv_tool_local_path(executable: str | None = None) -> Path | None:
+    """Return the local directory path if memory-bank was installed from a local path, else None.
+
+    uv writes directory = "..." in uv-receipt.toml for path installs.
+    PyPI installs have only name/version, no directory key.
+    """
+    import tomllib
+
+    tool_root = _uv_tool_root(executable)
+    if tool_root is None:
+        return None
+    receipt = tool_root / "uv-receipt.toml"
+    data = tomllib.loads(receipt.read_text())
+    for req in data.get("tool", {}).get("requirements", []):
+        if "directory" in req:
+            return Path(req["directory"])
+    return None
 
 
 def _detect_install_dir(executable: str | None = None) -> Path | None:
@@ -60,16 +78,36 @@ def _print_version_result(before: str, after: str) -> None:
 
 
 def _update_uv_tool(before_version: str) -> None:
-    console.print("[dim]Detected uv tool install — running uv tool upgrade[/dim]\n")
-    console.print("[bold]Upgrading package[/bold]")
-    upgrade = subprocess.run(
-        ["uv", "tool", "upgrade", "memory-bank"],
-        capture_output=True,
-        text=True,
-    )
+    local_path = _uv_tool_local_path()
+
+    if local_path is not None:
+        console.print(f"[dim]Detected local path install ({local_path}) — running git pull + uv tool install[/dim]\n")
+        pull = subprocess.run(
+            ["git", "-C", str(local_path), "pull", "--ff-only"],
+            capture_output=True,
+            text=True,
+        )
+        if pull.returncode != 0:
+            console.print(f"[red]{pull.stderr.strip()}[/red]")
+            raise click.ClickException("git pull failed — see above for details.")
+        if pull.stdout.strip():
+            console.print(f"  [dim]{pull.stdout.strip()}[/dim]")
+
+        console.print("[bold]Reinstalling package[/bold]")
+        cmd = ["uv", "tool", "install", str(local_path), "--reinstall"]
+    else:
+        console.print("[dim]Detected uv tool install — running uv tool upgrade[/dim]\n")
+        console.print("[bold]Upgrading package[/bold]")
+        cmd = ["uv", "tool", "upgrade", "memory-bank"]
+
+    upgrade = subprocess.run(cmd, capture_output=True, text=True)
     if upgrade.returncode != 0:
         console.print(f"[red]{upgrade.stderr.strip()}[/red]")
-        raise click.ClickException("uv tool upgrade failed — see above for details.")
+        recovery = f"uv tool install {local_path} --reinstall" if local_path else "uv tool install memory-bank --reinstall"
+        raise click.ClickException(
+            f"Upgrade failed — see above for details.\n\n"
+            f"  To recover, run: [cyan]{recovery}[/cyan]"
+        )
     output = (upgrade.stdout + upgrade.stderr).strip()
     if output:
         console.print(f"  [dim]{output}[/dim]")
