@@ -30,13 +30,13 @@ START_CONTEXT_COMMAND = (
 )
 
 PRECOMPACT_HOOK_COMMAND = (
-    "memory-bank ingest claude-code"
+    "memory-bank ingest claude-code  # precompact"
     " >> ~/.memory-bank/ingest.log 2>&1 &"
 )
 
 STOP_HOOK_MARKER = "memory-bank ingest claude-code"
 START_HOOK_MARKER = "memory-bank hooks context-summary"
-PRECOMPACT_HOOK_MARKER = "memory-bank ingest claude-code"
+PRECOMPACT_HOOK_MARKER = "# precompact"
 
 from memory_bank.commands._recall_guard import (  # noqa: E402
     RECALL_HOOK_COMMAND,
