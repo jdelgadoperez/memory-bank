@@ -19,16 +19,31 @@ def _current_version() -> str:
         return "unknown"
 
 
+def _detect_uv_tool_install(executable: str | None = None) -> bool:
+    """Return True if running from a uv tool install.
+
+    uv tool installs place a uv-receipt.toml at the tool root alongside
+    pyvenv.cfg. The Python binary lives at <tool-root>/bin/python — without
+    symlink resolution, two parents up from sys.executable is the tool root.
+    """
+    exec_path = Path(executable or sys.executable)  # no .resolve() — avoid following pyenv symlinks
+    tool_root = exec_path.parent.parent
+    return (tool_root / "uv-receipt.toml").exists()
+
+
 def _detect_install_dir(executable: str | None = None) -> Path | None:
     """Resolve the memory-bank repo root from the running Python executable.
 
-    In both dev and managed installs the Python binary lives at:
+    In git-based (install.sh) installs the Python binary lives at:
       <repo>/.venv/bin/python
 
     So the repo root is three parents up from sys.executable.
     Returns None if the path doesn't look like a venv install.
+
+    Note: deliberately avoids Path.resolve() to prevent following pyenv
+    symlinks, which would cause the pyvenv.cfg check to look in the wrong dir.
     """
-    exec_path = Path(executable or sys.executable).resolve()
+    exec_path = Path(executable or sys.executable)  # no .resolve()
     candidate = exec_path.parent.parent.parent
     if not (exec_path.parent.parent / "pyvenv.cfg").exists():
         return None
@@ -66,7 +81,7 @@ def _update_uv_tool(before_version: str) -> None:
     console.print("\n  Hooks and MCP configuration were not changed.")
 
 
-def _update_git(resolved_dir: Path) -> None:
+def _update_git(resolved_dir: Path, before_version: str = "") -> None:
     console.print(f"[dim]Install directory: {resolved_dir}[/dim]\n")
 
     console.print("[bold]Pulling latest code[/bold]")
@@ -115,6 +130,12 @@ def _update_git(resolved_dir: Path) -> None:
     else:
         console.print("  [dim]No skills found (non-editable install?)[/dim]")
 
+    if before_version:
+        after_version = _current_version()
+        console.print()
+        _print_version_result(before_version, after_version)
+        console.print("\n  Hooks and MCP configuration were not changed.")
+
 
 @cli.command(context_settings=CONTEXT_SETTINGS)
 @click.option(
@@ -141,29 +162,30 @@ def update(install_dir: str | None) -> None:
       memory-bank update
       memory-bank update --dir ~/.local/share/memory-bank
     """
-    resolved_dir: Path | None = (
-        Path(install_dir).expanduser().resolve() if install_dir else _detect_install_dir()
-    )
+    before_version = _current_version()
+    console.print(f"[bold]memory-bank update[/bold]  [dim](current: v{before_version})[/dim]\n")
 
+    # Explicit --dir always means a git-based install
+    if install_dir:
+        resolved_dir = Path(install_dir).expanduser().resolve()
+        if not resolved_dir.is_dir():
+            raise click.ClickException(f"Install directory does not exist: {resolved_dir}")
+        _update_git(resolved_dir, before_version)
+        return
+
+    # uv tool install — detected via uv-receipt.toml at the tool root
+    if _detect_uv_tool_install():
+        _update_uv_tool(before_version)
+        return
+
+    # git-based install (install.sh)
+    resolved_dir = _detect_install_dir()
     if resolved_dir is None:
         raise click.ClickException(
             "Could not detect the memory-bank install directory from the running Python binary. "
             "Pass --dir explicitly: memory-bank update --dir ~/.local/share/memory-bank"
         )
-
     if not resolved_dir.is_dir():
         raise click.ClickException(f"Install directory does not exist: {resolved_dir}")
 
-    before_version = _current_version()
-    console.print(f"[bold]memory-bank update[/bold]  [dim](current: v{before_version})[/dim]\n")
-
-    if not (resolved_dir / ".git").is_dir():
-        _update_uv_tool(before_version)
-        return
-
-    _update_git(resolved_dir)
-
-    after_version = _current_version()
-    console.print()
-    _print_version_result(before_version, after_version)
-    console.print("\n  Hooks and MCP configuration were not changed.")
+    _update_git(resolved_dir, before_version)
