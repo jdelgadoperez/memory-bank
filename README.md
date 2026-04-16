@@ -19,7 +19,7 @@ Installs `uv` if needed, runs `uv tool install memory-bank`, wires Claude Code h
 > export PATH="$HOME/.local/bin:$PATH"
 > ```
 
-**Option 2 — manual**
+**Option 2 — manual (uv tool)**
 
 ```bash
 uv tool install memory-bank
@@ -28,6 +28,20 @@ memory-bank ingest claude-code
 ```
 
 To update: `memory-bank update`
+
+**Option 3 — clone (contributors / local dev)**
+
+```bash
+git clone https://github.com/jdelgadoperez/memory-bank
+cd memory-bank
+uv sync
+mkdir -p ~/.local/bin
+ln -sf "$PWD/.venv/bin/memory-bank" ~/.local/bin/memory-bank
+memory-bank setup install --on recommended
+memory-bank ingest claude-code
+```
+
+Skills are symlinked from the source tree in this mode — edits take effect immediately without reinstalling.
 
 **Note:** On first ingest, `BAAI/bge-small-en-v1.5` embedding model (~25 MB) downloads once from HuggingFace and runs fully offline after.
 

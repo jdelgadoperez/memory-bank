@@ -12,7 +12,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/jdelgadoperez/memory-bank/ma
 
 Installs `uv` if needed, runs `uv tool install memory-bank`, wires hooks and MCP server, and runs an initial ingest. No repo clone required.
 
-**Manual**
+**Manual (uv tool)**
 
 ```bash
 uv tool install memory-bank
@@ -21,6 +21,17 @@ memory-bank ingest claude-code
 ```
 
 To update: `memory-bank update`
+
+**Clone (contributors / local dev)**
+
+```bash
+git clone https://github.com/jdelgadoperez/memory-bank
+cd memory-bank
+uv sync
+mkdir -p ~/.local/bin
+ln -sf "$PWD/.venv/bin/memory-bank" ~/.local/bin/memory-bank
+memory-bank setup install --on recommended
+```
 
 The `memory-bank` CLI is now available. The Qdrant DB is stored at `~/.memory-bank/qdrant/` by default.
 
