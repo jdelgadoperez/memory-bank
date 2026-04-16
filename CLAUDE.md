@@ -31,6 +31,7 @@ uv sync
 mkdir -p ~/.local/bin
 ln -sf "$PWD/.venv/bin/memory-bank" ~/.local/bin/memory-bank
 memory-bank setup install --on recommended
+memory-bank ingest claude-code
 ```
 
 The `memory-bank` CLI is now available. The Qdrant DB is stored at `~/.memory-bank/qdrant/` by default.
@@ -65,6 +66,7 @@ memory-bank stats
 | `CLAUDE_DESKTOP_PATH` | `~/Library/Application Support/Claude` | Override Claude Desktop source path |
 | `ANTHROPIC_API_KEY` | — | Required for the search agent script |
 | `MEMORY_BANK_RECALL` | — | Set to `0` to temporarily disable the recall (UserPromptSubmit) hook |
+| `QDRANT_URL` | — | Override the Qdrant server URL (e.g. `http://localhost:6333`). Skips Docker auto-start. |
 
 ## Auto-ingest via hooks
 
@@ -169,6 +171,8 @@ memory-bank setup status
 memory-bank hooks install [--on stop|start|precompact|recall|both|recommended|all]
 memory-bank hooks uninstall
 memory-bank hooks status
+
+memory-bank update [--dir DIR]
 ```
 
 ### Time expressions (`--since` / `--before`)
@@ -254,10 +258,15 @@ src/memory_bank/
 │   ├── manage.py          — stats + delete commands
 │   ├── hooks.py           — hooks install/uninstall/status
 │   ├── setup.py           — setup install/uninstall/status
+│   ├── update.py          — update command (uv tool upgrade or git pull)
+│   ├── _recall_guard.py   — recall hook logic and skip patterns
 │   └── mcp.py             — mcp command
 ├── ui/
 │   ├── server.py          — HTML template + HTTP server + ui group command
 │   └── daemon.py          — background daemon (start/stop/restart/status/dev)
+├── skills/
+│   ├── memory-search/SKILL.md — semantic search skill
+│   └── memory-recall/SKILL.md — full session context retrieval skill
 └── ingestors/
     ├── base.py            — BaseIngestor ABC
     ├── claude_code.py     — ~/.claude/projects/**/*.jsonl
@@ -267,8 +276,30 @@ src/memory_bank/
 
 scripts/
 └── search_agent.py        — Agentic search via Anthropic API
-
-skills/
-├── memory-search/SKILL.md — semantic search skill
-└── memory-recall/SKILL.md — full session context retrieval skill
 ```
+
+<!-- memory-bank:start -->
+# Memory Bank Context  ·  2026-04-16 20:15 UTC
+Project: **memory-bank**
+
+## Relevant past work
+
+**[user]** 2026-04-16  |  project: memory-bank  |  session: `6af1b467-d029-4f`
+> [tool_result: memory-bank v0.1.0
+- memory-bank]
+
+**[user]** 2026-04-16  |  project: memory-bank  |  session: `6af1b467-d029-4f`
+> [tool_result: memory-bank v0.1.0
+- memory-bank]
+
+**[user]** 2026-04-03  |  project: memory-bank  |  session: `8072ef43-07f9-43`
+> byline ideas for memory-bank
+
+**[user]** 2026-04-16  |  project: memory-bank  |  session: `6af1b467-d029-4f`
+> [tool_result: memory-recall
+memory-search]
+
+**[assistant]** 2026-04-03  |  project: memory-bank  |  session: `agent-a98f439068`
+> [tool:Glob {"pattern": "/Users/jessdelgadoperez/projects/memory-bank/skills/memory-recall/SKILL.md"}]
+
+<!-- memory-bank:end -->
