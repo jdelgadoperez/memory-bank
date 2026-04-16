@@ -238,14 +238,14 @@ Launches a local web UI to browse and search your memory bank. When run without 
 
 | Option                    | Description                                    |
 | ------------------------- | ---------------------------------------------- |
-| `-p PORT` / `--port PORT` | Port to listen on (default: 8080)              |
+| `-p PORT` / `--port PORT` | Port to listen on (default: 8765)              |
 | `-B` / `--no-browser`     | Start the server without opening a browser tab |
 | `--db PATH`               | Use an alternate DB path                       |
 
 ```bash
 memory-bank ui                   # foreground server, opens browser
 memory-bank ui -B                # foreground, no browser
-memory-bank ui -p 8080           # custom port
+memory-bank ui -p 8765           # custom port
 ```
 
 #### Background daemon

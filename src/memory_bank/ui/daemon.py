@@ -60,7 +60,7 @@ def _register_daemon_commands(ui_group):
         \b
         Examples:
           memory-bank ui start
-          memory-bank ui start -p 8080
+          memory-bank ui start -p 8765
         """
         import json
         import shutil

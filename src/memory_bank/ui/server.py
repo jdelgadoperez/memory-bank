@@ -424,10 +424,10 @@ loadStats().then(()=>loadSessions());
 @cli.group(context_settings=CONTEXT_SETTINGS, invoke_without_command=True)
 @click.option(
     "--port", "-p",
-    default=8080,
+    default=8765,
     show_default=True,
     metavar="PORT",
-    help="Local port for the web UI. Defaults to 8080 to avoid conflicting with Qdrant (6333).",
+    help="Local port for the web UI. Defaults to 8765 to avoid conflicting with Qdrant (6333).",
 )
 @click.option(
     "--no-browser", "-B",
@@ -455,8 +455,8 @@ def ui(ctx, port, no_browser, db):
       memory-bank ui start              # background daemon
       memory-bank ui stop               # stop background server
       memory-bank ui status             # check if running
-      memory-bank ui --port 8080        # foreground on custom port
-      memory-bank ui start -p 8080      # background on custom port
+      memory-bank ui --port 8765        # foreground on custom port
+      memory-bank ui start -p 8765      # background on custom port
     """
     ctx.ensure_object(dict)
     ctx.obj["port"] = port
