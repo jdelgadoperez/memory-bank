@@ -4,6 +4,25 @@
 
 Local vector DB for ingesting and searching Claude chat histories. Ask "what did I work on last week?" and get real answers from your past sessions — no cloud, no server, everything runs on your machine.
 
+## Contents
+
+- [Getting started](#getting-started)
+- [Configuration](#configuration)
+- [Commands](#commands)
+  - [Ingest](#ingest)
+  - [Search](#search)
+  - [Stats](#stats)
+  - [Delete](#delete)
+  - [UI](#ui)
+  - [Hooks](#hooks)
+  - [Update](#update)
+- [Data sources](#data-sources)
+- [Custom data source (Python API)](#custom-data-source-python-api)
+- [Interactive search agent](#interactive-search-agent)
+- [Claude Code integration](#claude-code-integration)
+- [How it works](#how-it-works)
+- [Project layout](#project-layout)
+
 ## Getting started
 
 **Option 1 — one-step installer (recommended)**
