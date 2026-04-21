@@ -37,7 +37,7 @@ click.rich_click.COMMAND_GROUPS = {
         },
         {
             "name": "Query & Manage",
-            "commands": ["search", "sessions", "session", "stats", "delete", "ui"],
+            "commands": ["search", "sessions", "session", "stats", "delete", "ui", "distill"],
         },
         {
             "name": "Integration",
@@ -271,6 +271,7 @@ def _run_ingest(ingestor, db_path: Path | None = None, _drain: bool = True):
 # ---------------------------------------------------------------------------
 
 from memory_bank.commands import (  # noqa: E402, F401
+    distill,
     hooks,
     ingest,
     manage,

@@ -174,9 +174,12 @@ def parse_time_expr(expr: str) -> str:
     import re
 
     expr = expr.strip()
-    m = re.fullmatch(r"(\d+)([dwmy])", expr, re.IGNORECASE)
+    m = re.fullmatch(r"(\d+)([hdwmy])", expr, re.IGNORECASE)
     if m:
         n, unit = int(m.group(1)), m.group(2).lower()
+        if unit == "h":
+            dt = datetime.now(timezone.utc) - timedelta(hours=n)
+            return dt.isoformat()
         delta_map = {"d": 1, "w": 7, "m": 30, "y": 365}
         dt = datetime.now(timezone.utc) - timedelta(days=n * delta_map[unit])
         return dt.isoformat()

@@ -12,7 +12,7 @@ RECALL_HOOK_COMMAND = (
     " 2>> ~/.memory-bank/ingest.log"
 )
 RECALL_HOOK_MARKER = "memory-bank hooks recall"
-RECALL_MIN_SCORE = 0.65
+RECALL_MIN_SCORE = 0.70
 RECALL_LIMIT = 3
 RECALL_SNIPPET_LENGTH = 300
 

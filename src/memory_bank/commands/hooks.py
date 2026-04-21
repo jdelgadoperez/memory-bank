@@ -34,9 +34,15 @@ PRECOMPACT_HOOK_COMMAND = (
     " >> ~/.memory-bank/ingest.log 2>&1 &"
 )
 
+DISTILL_HOOK_COMMAND = (
+    "memory-bank distill --since 3h"
+    " >> ~/.memory-bank/ingest.log 2>&1 &"
+)
+
 STOP_HOOK_MARKER = "memory-bank ingest claude-code"
 START_HOOK_MARKER = "memory-bank hooks context-summary"
 PRECOMPACT_HOOK_MARKER = "# precompact"
+DISTILL_HOOK_MARKER = "memory-bank distill"
 
 from memory_bank.commands._recall_guard import (  # noqa: E402
     RECALL_HOOK_COMMAND,
@@ -125,7 +131,7 @@ def remove_hooks(path: Path | None = None) -> list[str]:
     settings = json.loads(p.read_text())
     removed: list[str] = []
 
-    all_markers = (STOP_HOOK_MARKER, START_HOOK_MARKER, PRECOMPACT_HOOK_MARKER, RECALL_HOOK_MARKER)
+    all_markers = (STOP_HOOK_MARKER, START_HOOK_MARKER, PRECOMPACT_HOOK_MARKER, RECALL_HOOK_MARKER, DISTILL_HOOK_MARKER)
     for event in list(settings.get("hooks", {}).keys()):
         before = settings["hooks"][event]
         after = [
@@ -169,18 +175,19 @@ def hooks():
 @click.option(
     "--on",
     "trigger",
-    type=click.Choice(["stop", "start", "precompact", "recall", "both", "recommended", "all"]),
+    type=click.Choice(["stop", "start", "precompact", "recall", "distill", "both", "recommended", "all"]),
     default="all",
     show_default=True,
     help=(
         "Which Claude Code hook event to attach to.\n\n"
-        "stop        = after each session ends \u2014 runs ingest\n"
-        "start       = when a new session begins \u2014 writes a context summary\n"
-        "precompact  = before context compaction \u2014 captures full transcript\n"
-        "recall      = before each prompt \u2014 injects relevant past context\n"
+        "stop        = after each session ends — runs ingest\n"
+        "start       = when a new session begins — writes a context summary\n"
+        "precompact  = before context compaction — captures full transcript\n"
+        "recall      = before each prompt — injects relevant past context\n"
+        "distill     = after each session ends — generates AI summaries (requires ANTHROPIC_API_KEY)\n"
         "both        = stop + start\n"
-        "recommended = stop + recall\n"
-        "all         = stop + start + precompact + recall (default)"
+        "recommended = stop + recall + distill\n"
+        "all         = stop + start + precompact + recall + distill (default)"
     ),
 )
 @click.option(
@@ -224,6 +231,8 @@ def install(trigger, settings_path):
         plan.append(("PreCompact", PRECOMPACT_HOOK_COMMAND, PRECOMPACT_HOOK_MARKER))
     if trigger in ("recall", "recommended", "all"):
         plan.append(("UserPromptSubmit", RECALL_HOOK_COMMAND, RECALL_HOOK_MARKER))
+    if trigger in ("distill", "recommended", "all"):
+        plan.append(("Stop", DISTILL_HOOK_COMMAND, DISTILL_HOOK_MARKER))
 
     installed_any = False
     for event, command, marker in plan:
@@ -413,8 +422,12 @@ def recall(db):
     # attempts are also bounded by the timeout, not just the search itself.
     db_path = Path(db) if db else None
 
+    from memory_bank.commands.distill import SUMMARY_ROLE
+
     def _search():
-        return MemoryDB(db_path).search(query=query, limit=10, project=project)
+        db = MemoryDB(db_path)
+        # Over-fetch so we have enough candidates after summary/raw preference logic.
+        return db.search(query=query, limit=15, project=project)
 
     with ThreadPoolExecutor(max_workers=1) as pool:
         try:
@@ -428,10 +441,23 @@ def recall(db):
     # Filter by min score
     results = [r for r in results if r.get("score", 0) >= RECALL_MIN_SCORE]
 
-    # Deduplicate by session
-    seen_sessions: set[str] = set()
-    deduplicated: list[dict] = []
+    # Prefer distilled summaries over raw turns.
+    # If a session has a summary record, use it instead of the raw snippet.
+    summaries: dict[str, dict] = {}
+    raw: list[dict] = []
     for r in results:
+        if r.get("role") == SUMMARY_ROLE:
+            sid = r.get("session_id", "")
+            if sid not in summaries or r.get("score", 0) > summaries[sid].get("score", 0):
+                summaries[sid] = r
+        else:
+            raw.append(r)
+
+    summarized_sessions = set(summaries.keys())
+    deduplicated: list[dict] = list(summaries.values())
+    seen_sessions: set[str] = set(summarized_sessions)
+
+    for r in raw:
         sid = r.get("session_id", "")
         if sid not in seen_sessions:
             deduplicated.append(r)
@@ -446,7 +472,7 @@ def recall(db):
     lines = [
         "<!-- memory-bank:recall -->",
         "The following past context is semantically relevant to the current prompt. "
-        "Reference it if it helps \u2014 do not repeat it back to the user.",
+        "Reference it if it helps — do not repeat it back to the user.",
         "",
     ]
 
@@ -455,17 +481,31 @@ def recall(db):
         role = r.get("role", "?")
         sid = r.get("session_id", "")
         result_project = r.get("project", "")
-        snippet = r.get("content", "")[:RECALL_SNIPPET_LENGTH]
-        if len(r.get("content", "")) > RECALL_SNIPPET_LENGTH:
-            snippet += "\u2026"
+        is_summary = role == SUMMARY_ROLE
 
         meta = f"{date} | session: `{sid[:16]}`"
         if result_project and result_project != project_name:
             meta += f" | project: {result_project}"
-        meta += f" ({role})"
+        if is_summary:
+            meta += " (distilled)"
+        else:
+            meta += f" ({role})"
 
         lines.append(f"- {meta}")
-        lines.append(f"  > {snippet}")
+
+        if is_summary:
+            # Summaries are already condensed — show full content up to a wider limit.
+            content = r.get("content", "")
+            for bullet in content.splitlines():
+                bullet = bullet.strip()
+                if bullet:
+                    lines.append(f"  {bullet}")
+        else:
+            snippet = r.get("content", "")[:RECALL_SNIPPET_LENGTH]
+            if len(r.get("content", "")) > RECALL_SNIPPET_LENGTH:
+                snippet += "…"
+            lines.append(f"  > {snippet}")
+
         lines.append("")
 
     lines.append("<!-- /memory-bank:recall -->")
@@ -519,6 +559,7 @@ def status(settings_path):
 
     checks = [
         ("Stop", STOP_HOOK_MARKER, "ingest"),
+        ("Stop", DISTILL_HOOK_MARKER, "distill"),
         ("SessionStart", START_HOOK_MARKER, "context-summary"),
         ("PreCompact", PRECOMPACT_HOOK_MARKER, "pre-compaction ingest"),
         ("UserPromptSubmit", RECALL_HOOK_MARKER, "recall"),
