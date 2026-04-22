@@ -91,7 +91,7 @@ def _install_skill(name: str, skill_path: Path, editable: bool) -> str | None:
                 return None  # already up to date
             target.unlink()
         elif target.exists():
-            return f"[yellow]{name} — exists but is not a symlink, skipping[/yellow]"
+            shutil.rmtree(target)
         target.symlink_to(skill_path)
         return f"[bold green]Installed:[/bold green] {name} → [dim]{skill_path}[/dim]"
     else:
@@ -156,7 +156,7 @@ def setup():
     "--on",
     "trigger",
     type=click.Choice(["stop", "start", "precompact", "recall", "both", "recommended", "all"]),
-    default="stop",
+    default="recommended",
     show_default=True,
     help="Which hook event to use (ignored with --skip-hooks).",
 )
