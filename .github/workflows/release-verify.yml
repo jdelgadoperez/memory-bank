@@ -1,0 +1,29 @@
+name: Release Verify
+
+on:
+  schedule:
+    - cron: '0 2 * * *'   # nightly 2am UTC
+  workflow_dispatch:        # manual trigger
+
+jobs:
+  release-verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write      # for git push (creating fix branches)
+      pull-requests: write # for gh pr create
+      issues: write        # for gh issue create
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync
+      - run: python scripts/release_verify.py
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MEMORY_BANK_DB: /tmp/mb-verify-db
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: release-verify-summary
+          path: _summaries/
