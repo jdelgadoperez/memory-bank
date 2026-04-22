@@ -9,8 +9,6 @@ import anthropic
 
 from scripts.release.types import CheckResult, ScenarioResult
 
-REPO_ROOT = Path(__file__).parent.parent.parent
-
 
 def build_context_bundle(results: list[ScenarioResult]) -> str:
     """Summarize all FAIL CheckResults across all scenarios as a human-readable string.
@@ -260,6 +258,7 @@ def run_fix_loop(
             "status": "SKIP",
             "iterations": 0,
             "explanation": "ANTHROPIC_API_KEY not set",
+            "modified_files": [],
             "iteration_log": "",
         }
 
@@ -307,5 +306,6 @@ def run_fix_loop(
         "status": "AGENT_FAILED",
         "iterations": max_iterations,
         "explanation": "",
+        "modified_files": [],
         "iteration_log": "\n".join(log_lines),
     }
