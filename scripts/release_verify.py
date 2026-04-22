@@ -65,7 +65,6 @@ def _run_scenarios(scenario_name_filter: str | None) -> tuple[list[ScenarioResul
 
 def _handle_fix_loop(results: list[ScenarioResult]) -> dict[str, Any]:
     branch = f"fix/release-verify-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}"
-    create_branch(branch)
 
     agent_result_typed: FixLoopResult = run_fix_loop(results, REPO_ROOT, branch)
     agent_result: dict[str, Any] = dict(agent_result_typed)
@@ -77,6 +76,7 @@ def _handle_fix_loop(results: list[ScenarioResult]) -> dict[str, Any]:
         # apply_patch always writes the test file first; subsequent entries are patched source files
         test_file = modified[0] if modified else ""
         other_files = modified[1:] if len(modified) > 1 else []
+        create_branch(branch)
         commit_fix(other_files, test_file, failing_checks[0].name)
         push_branch(branch)
         pr_url = open_pr(branch, failing_checks[0].name, agent_result_typed["explanation"], failing_checks)

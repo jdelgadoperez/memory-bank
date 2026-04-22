@@ -1,5 +1,0 @@
-{
-  "_description": "Expected fields in uv-receipt.toml (parsed as dict)",
-  "required_keys": ["tool", "version", "install_type"],
-  "tool_name": "memory-bank"
-}

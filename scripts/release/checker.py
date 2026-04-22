@@ -53,10 +53,9 @@ def _run_command(installed: InstalledScenario, args: list[str]) -> CheckResult:
 def _read_settings_json(installed: InstalledScenario) -> dict:
     settings_path = installed.tmp_dir / "tools" / "memory-bank" / "settings.json"
     if not settings_path.exists():
-        merged_env = {**os.environ, **installed.env}
-        home_dir = merged_env.get("HOME", "~")
+        home_dir = os.environ.get("HOME", "~")
         home_settings = Path(home_dir).expanduser() / ".claude" / "settings.json"
-        if "HOME" in installed.env and home_settings.exists():
+        if home_settings.exists():
             return json.loads(home_settings.read_text())
         return {}
     return json.loads(settings_path.read_text())
