@@ -1,0 +1,29 @@
+hooks:
+  required_markers:
+    Stop:
+      - "memory-bank ingest claude-code"
+      - "memory-bank distill"
+    PreCompact:
+      - "memory-bank ingest claude-code  # precompact"
+    UserPromptSubmit:
+      - "memory-bank hooks recall"
+    SessionStart:
+      - "memory-bank hooks context-summary"
+  marker_uniqueness:
+    description: "Stop and PreCompact must not share an identical substring match"
+    stop_unique_substring: "# precompact"
+
+uv_receipt:
+  required_fields:
+    - tool
+    - version
+    - install_type
+  tool_name: "memory-bank"
+
+commands:
+  exit_zero:
+    - "memory-bank --version"
+    - "memory-bank ingest claude-code"
+    - "memory-bank hooks install --on all"
+    - "memory-bank distill --dry-run"
+    - "memory-bank update"

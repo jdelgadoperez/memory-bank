@@ -782,14 +782,16 @@ wheels = [
 
 [[package]]
 name = "memory-bank"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
     { name = "click" },
+    { name = "mcp" },
     { name = "onnxruntime", version = "1.23.2", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'" },
     { name = "onnxruntime", version = "1.24.4", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
     { name = "python-dateutil" },
+    { name = "pyyaml" },
     { name = "qdrant-client", extra = ["fastembed"] },
     { name = "rich" },
     { name = "rich-click" },
@@ -801,26 +803,24 @@ dev = [
     { name = "ruff" },
     { name = "watchfiles" },
 ]
-mcp = [
-    { name = "mcp" },
-]
 
 [package.metadata]
 requires-dist = [
     { name = "anthropic", specifier = ">=0.40.0" },
     { name = "click", specifier = ">=8.1" },
-    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.0" },
+    { name = "mcp", specifier = ">=1.0" },
     { name = "onnxruntime", specifier = ">=1.17.0" },
     { name = "onnxruntime", marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'", specifier = "<1.24.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "python-dateutil", specifier = ">=2.9" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "qdrant-client", extras = ["fastembed"], specifier = ">=1.9.0" },
     { name = "rich", specifier = ">=13.0" },
     { name = "rich-click", specifier = ">=1.7" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.4" },
     { name = "watchfiles", marker = "extra == 'dev'", specifier = ">=0.21" },
 ]
-provides-extras = ["dev", "mcp"]
+provides-extras = ["dev"]
 
 [[package]]
 name = "mmh3"
