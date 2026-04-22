@@ -63,17 +63,18 @@ def _run_scenarios(scenario_name_filter: str | None) -> tuple[list[ScenarioResul
     return results, had_install_failure
 
 
-def _handle_fix_loop(results: list[ScenarioResult]) -> tuple[FixLoopResult, dict[str, Any]]:
-    branch = f"fix/release-verify-{datetime.now(UTC).strftime('%Y%m%d')}"
+def _handle_fix_loop(results: list[ScenarioResult]) -> dict[str, Any]:
+    branch = f"fix/release-verify-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}"
     create_branch(branch)
 
-    agent_result_typed = run_fix_loop(results, REPO_ROOT, branch)
+    agent_result_typed: FixLoopResult = run_fix_loop(results, REPO_ROOT, branch)
     agent_result: dict[str, Any] = dict(agent_result_typed)
 
     failing_checks = _collect_failing_checks(results)
 
     if agent_result_typed["status"] == "TESTS_PASS" and failing_checks:
         modified = agent_result_typed["modified_files"]
+        # apply_patch always writes the test file first; subsequent entries are patched source files
         test_file = modified[0] if modified else ""
         other_files = modified[1:] if len(modified) > 1 else []
         commit_fix(other_files, test_file, failing_checks[0].name)
@@ -85,7 +86,7 @@ def _handle_fix_loop(results: list[ScenarioResult]) -> tuple[FixLoopResult, dict
         issue_url = open_issue(failing_checks[0].name, agent_result_typed["iteration_log"])
         agent_result["issue_url"] = issue_url
 
-    return agent_result_typed, agent_result
+    return agent_result
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -103,7 +104,7 @@ def main(argv: list[str] | None = None) -> int:
     fix_status: str | None = None
 
     if not all_passed and results:
-        _, agent_result = _handle_fix_loop(results)
+        agent_result = _handle_fix_loop(results)
         fix_status = agent_result.get("status")
 
     report_path = write_report(results, agent_result=agent_result)
