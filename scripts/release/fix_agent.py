@@ -4,10 +4,25 @@ import json
 import os
 import subprocess
 from pathlib import Path
+from typing import Literal, TypedDict
 
 import anthropic
 
 from scripts.release.types import CheckResult, ScenarioResult
+
+
+class ParsedAgentResponse(TypedDict):
+    explanation: str
+    patch: str
+    test: str
+
+
+class FixLoopResult(TypedDict):
+    status: Literal["TESTS_PASS", "AGENT_FAILED", "SKIP"]
+    iterations: int
+    explanation: str
+    modified_files: list[str]
+    iteration_log: str
 
 
 def build_context_bundle(results: list[ScenarioResult]) -> str:
@@ -46,7 +61,6 @@ def _find_relevant_source_files(check_names: list[str], repo_root: Path) -> list
 
     matched: set[Path] = set()
     for name in check_names:
-        # Use the first token of a check name as a grep term (e.g. "hook_markers" → "hook")
         tokens = [t for t in name.replace("_", " ").split() if len(t) > 3]
         for token in tokens:
             result = subprocess.run(
@@ -112,7 +126,7 @@ def _build_system_prompt(results: list[ScenarioResult], repo_root: Path) -> str:
 def _call_claude(
     client: anthropic.Anthropic,
     system: str,
-    messages: list[dict],
+    messages: list[dict[str, str]],
 ) -> str:
     """Call the Claude API with ephemeral cache control on the system prompt.
 
@@ -139,7 +153,7 @@ def _call_claude(
     return response.content[0].text
 
 
-def parse_agent_response(raw: str) -> dict:
+def parse_agent_response(raw: str) -> ParsedAgentResponse:
     """Parse a Claude response into a structured dict.
 
     Strips markdown code fences (```json ... ```) before parsing.
@@ -155,7 +169,6 @@ def parse_agent_response(raw: str) -> dict:
 
     if text.startswith("```"):
         lines = text.splitlines()
-        # Drop opening fence line and closing fence
         inner_lines = lines[1:]
         if inner_lines and inner_lines[-1].strip() == "```":
             inner_lines = inner_lines[:-1]
@@ -163,13 +176,13 @@ def parse_agent_response(raw: str) -> dict:
 
     try:
         parsed = json.loads(text)
-        return {
-            "explanation": parsed.get("explanation", ""),
-            "patch": parsed.get("patch", ""),
-            "test": parsed.get("test", ""),
-        }
+        return ParsedAgentResponse(
+            explanation=parsed.get("explanation", ""),
+            patch=parsed.get("patch", ""),
+            test=parsed.get("test", ""),
+        )
     except (json.JSONDecodeError, ValueError):
-        return {"explanation": raw, "patch": "", "test": ""}
+        return ParsedAgentResponse(explanation=raw, patch="", test="")
 
 
 def apply_patch(
@@ -206,7 +219,6 @@ def apply_patch(
     )
 
     if result.returncode == 0:
-        # Extract patched filenames from patch output lines like "patching file src/..."
         for line in result.stdout.splitlines():
             if line.startswith("patching file "):
                 patched = line.removeprefix("patching file ").strip()
@@ -217,27 +229,31 @@ def apply_patch(
     return modified
 
 
-def _run_tests(repo_root: Path) -> bool:
+def _run_tests(repo_root: Path) -> tuple[bool, str]:
     """Run the full pytest suite.
 
     Args:
         repo_root: Root of the repository.
 
     Returns:
-        True if all tests pass (exit code 0), False otherwise.
+        A tuple of (passed, output) where passed is True if all tests pass
+        (exit code 0) and output is the combined stdout/stderr.
     """
     result = subprocess.run(
         ["uv", "run", "python", "-m", "pytest", "tests/", "-q"],
         cwd=str(repo_root),
+        capture_output=True,
+        text=True,
     )
-    return result.returncode == 0
+    output = (result.stdout + result.stderr).strip()
+    return result.returncode == 0, output
 
 
 def run_fix_loop(
     results: list[ScenarioResult],
     repo_root: Path,
     branch: str,
-) -> dict:
+) -> FixLoopResult:
     """Run the autonomous Claude fix loop up to 3 iterations.
 
     Builds the system prompt once (cached across iterations via ephemeral cache_control),
@@ -250,21 +266,21 @@ def run_fix_loop(
         branch: Git branch name (passed through to the result dict for callers).
 
     Returns:
-        Dict with keys: status, iterations, explanation, modified_files, iteration_log.
+        FixLoopResult with keys: status, iterations, explanation, modified_files, iteration_log.
         status is one of: "TESTS_PASS", "AGENT_FAILED", "SKIP".
     """
     if "ANTHROPIC_API_KEY" not in os.environ:
-        return {
-            "status": "SKIP",
-            "iterations": 0,
-            "explanation": "ANTHROPIC_API_KEY not set",
-            "modified_files": [],
-            "iteration_log": "",
-        }
+        return FixLoopResult(
+            status="SKIP",
+            iterations=0,
+            explanation="ANTHROPIC_API_KEY not set",
+            modified_files=[],
+            iteration_log="",
+        )
 
     client = anthropic.Anthropic()
     system = _build_system_prompt(results, repo_root)
-    messages: list[dict] = [
+    messages: list[dict[str, str]] = [
         {"role": "user", "content": "Analyze the failing checks and produce a fix."}
     ]
 
@@ -286,15 +302,17 @@ def run_fix_loop(
 
         log_lines.append(f"Modified files: {modified_files}")
 
-        if _run_tests(repo_root):
-            return {
-                "status": "TESTS_PASS",
-                "iterations": iteration + 1,
-                "explanation": parsed["explanation"],
-                "modified_files": modified_files,
-                "iteration_log": "\n".join(log_lines),
-            }
+        passed, test_output = _run_tests(repo_root)
+        if passed:
+            return FixLoopResult(
+                status="TESTS_PASS",
+                iterations=iteration + 1,
+                explanation=parsed["explanation"],
+                modified_files=modified_files,
+                iteration_log="\n".join(log_lines),
+            )
 
+        log_lines.append(f"Test output:\n{test_output[-500:]}")
         failure_message = (
             f"Tests still failing after iteration {iteration + 1}. "
             "Please revise the patch or test to address the remaining failures."
@@ -302,10 +320,10 @@ def run_fix_loop(
         messages.append({"role": "user", "content": failure_message})
         log_lines.append("Tests failed — continuing to next iteration.")
 
-    return {
-        "status": "AGENT_FAILED",
-        "iterations": max_iterations,
-        "explanation": "",
-        "modified_files": [],
-        "iteration_log": "\n".join(log_lines),
-    }
+    return FixLoopResult(
+        status="AGENT_FAILED",
+        iterations=max_iterations,
+        explanation="",
+        modified_files=[],
+        iteration_log="\n".join(log_lines),
+    )
