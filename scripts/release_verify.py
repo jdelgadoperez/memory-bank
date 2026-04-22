@@ -73,7 +73,10 @@ def _handle_fix_loop(results: list[ScenarioResult]) -> tuple[FixLoopResult, dict
     failing_checks = _collect_failing_checks(results)
 
     if agent_result_typed["status"] == "TESTS_PASS" and failing_checks:
-        commit_fix(agent_result_typed["modified_files"], "", failing_checks[0].name)
+        modified = agent_result_typed["modified_files"]
+        test_file = modified[0] if modified else ""
+        other_files = modified[1:] if len(modified) > 1 else []
+        commit_fix(other_files, test_file, failing_checks[0].name)
         push_branch(branch)
         pr_url = open_pr(branch, failing_checks[0].name, agent_result_typed["explanation"], failing_checks)
         agent_result["pr_url"] = pr_url
@@ -90,7 +93,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.update_golden:
         print("--update-golden is not yet implemented. Run the checker manually to regenerate golden files.")
-        return 1
+        return 0
 
     results, had_install_failure = _run_scenarios(args.scenario)
 

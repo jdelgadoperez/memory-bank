@@ -87,3 +87,30 @@ def test_main_scenario_fail_triggers_fix_loop() -> None:
         result = main([])
 
     assert result == 1
+
+
+def test_main_tests_pass_exits_0() -> None:
+    failing_results = [_make_failing_result(name) for name in ("local-editable", "git-main", "wheel")]
+    mock_installed = MagicMock()
+    fix_loop_result = {
+        "status": "TESTS_PASS",
+        "iterations": 1,
+        "explanation": "fixed",
+        "modified_files": ["tests/test_release_foo.py", "src/foo.py"],
+        "iteration_log": "",
+    }
+
+    with (
+        patch("scripts.release_verify.install_scenario", return_value=mock_installed),
+        patch("scripts.release_verify.run_checks", side_effect=failing_results),
+        patch("scripts.release_verify.cleanup"),
+        patch("scripts.release_verify.create_branch"),
+        patch("scripts.release_verify.run_fix_loop", return_value=fix_loop_result),
+        patch("scripts.release_verify.commit_fix"),
+        patch("scripts.release_verify.push_branch"),
+        patch("scripts.release_verify.open_pr", return_value="http://pr-url"),
+        patch("scripts.release_verify.write_report", return_value=Path("/tmp/report.md")),
+    ):
+        result = main([])
+
+    assert result == 0
