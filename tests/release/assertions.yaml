@@ -1,7 +1,7 @@
 hooks:
   required_markers:
     Stop:
-      - "memory-bank ingest claude-code"
+      - "memory-bank ingest claude-code >>"
       - "memory-bank distill"
     PreCompact:
       - "memory-bank ingest claude-code  # precompact"

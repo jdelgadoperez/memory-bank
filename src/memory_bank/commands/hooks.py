@@ -39,7 +39,7 @@ DISTILL_HOOK_COMMAND = (
     " >> ~/.memory-bank/ingest.log 2>&1 &"
 )
 
-STOP_HOOK_MARKER = "memory-bank ingest claude-code"
+STOP_HOOK_MARKER = "memory-bank ingest claude-code >>"
 START_HOOK_MARKER = "memory-bank hooks context-summary"
 PRECOMPACT_HOOK_MARKER = "# precompact"
 DISTILL_HOOK_MARKER = "memory-bank distill"
