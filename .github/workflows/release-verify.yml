@@ -96,7 +96,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@v8
       - run: uv sync --extra dev
       - run: uv run python -m scripts.release_verify
         env:
