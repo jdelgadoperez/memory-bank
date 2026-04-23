@@ -74,7 +74,13 @@ MCP_SERVER_CONFIG: dict[str, Any] = {
 def load_settings(path: Path | None = None) -> dict[str, Any]:
     p = path or SETTINGS_PATH
     if p.exists():
-        return json.loads(p.read_text())
+        try:
+            return json.loads(p.read_text())
+        except json.JSONDecodeError as exc:
+            raise click.ClickException(
+                f"Could not parse {p}: {exc}\n"
+                "Fix the JSON syntax before running this command."
+            ) from exc
     return {}
 
 
@@ -176,7 +182,7 @@ def hooks():
     "--on",
     "trigger",
     type=click.Choice(["stop", "start", "precompact", "recall", "distill", "both", "recommended", "all"]),
-    default="all",
+    default="recommended",
     show_default=True,
     help=(
         "Which Claude Code hook event to attach to.\n\n"
@@ -233,6 +239,12 @@ def install(trigger, settings_path):
         plan.append(("UserPromptSubmit", RECALL_HOOK_COMMAND, RECALL_HOOK_MARKER))
     if trigger in ("distill", "recommended", "all"):
         plan.append(("Stop", DISTILL_HOOK_COMMAND, DISTILL_HOOK_MARKER))
+
+    if trigger in ("distill", "recommended", "all") and not os.environ.get("ANTHROPIC_API_KEY"):
+        console.print(
+            "[yellow]Warning:[/yellow] ANTHROPIC_API_KEY is not set. "
+            "The distill hook requires it — set the key before the hook fires."
+        )
 
     installed_any = False
     for event, command, marker in plan:
@@ -454,7 +466,7 @@ def recall(db):
             raw.append(r)
 
     summarized_sessions = set(summaries.keys())
-    deduplicated: list[dict] = list(summaries.values())
+    deduplicated: list[dict] = list(summaries.values())[:RECALL_LIMIT]
     seen_sessions: set[str] = set(summarized_sessions)
 
     for r in raw:
