@@ -64,7 +64,7 @@ def _find_relevant_source_files(check_names: list[str], repo_root: Path) -> list
         tokens = [t for t in name.replace("_", " ").split() if len(t) > 3]
         for token in tokens:
             result = subprocess.run(
-                ["grep", "-rl", token, str(src_dir)],
+                ["grep", "-rIl", token, str(src_dir)],
                 capture_output=True,
                 text=True,
             )
@@ -94,10 +94,10 @@ def _build_system_prompt(results: list[ScenarioResult], repo_root: Path) -> str:
     source_sections: list[str] = []
     for file_path in relevant_files:
         try:
-            content = file_path.read_text()
+            content = file_path.read_text(encoding="utf-8")
             relative = file_path.relative_to(repo_root)
             source_sections.append(f"### {relative}\n```python\n{content}\n```")
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             continue
 
     source_block = "\n\n".join(source_sections)
