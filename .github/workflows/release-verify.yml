@@ -1,12 +1,93 @@
 name: Release Verify
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - 'scripts/release/**'
+      - 'scripts/release_verify.py'
+      - 'tests/release/**'
+      - '.github/workflows/release-verify.yml'
   schedule:
     - cron: '0 2 * * *'   # nightly 2am UTC
   workflow_dispatch:        # manual trigger
 
 jobs:
+  # Decide whether the verify job needs to run.
+  # - workflow_dispatch / push: always run (push is already paths-filtered).
+  # - schedule: only run if anything under the verify-relevant paths has
+  #   changed since the last successful release-verify run on main.
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.decide.outputs.should_run }}
+      reason: ${{ steps.decide.outputs.reason }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: decide
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$EVENT" != "schedule" ]]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "reason=trigger=$EVENT (always runs)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          last_sha=$(gh run list \
+            --workflow=release-verify.yml \
+            --branch=main \
+            --status=success \
+            --limit=1 \
+            --json headSha \
+            --jq '.[0].headSha // ""')
+
+          if [[ -z "$last_sha" ]]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "reason=no prior successful run found" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if ! git cat-file -e "$last_sha" 2>/dev/null; then
+            git fetch --no-tags --depth=1 origin "$last_sha" || true
+          fi
+          if ! git cat-file -e "$last_sha" 2>/dev/null; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "reason=last successful sha $last_sha not fetchable" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          paths=(
+            'src'
+            'pyproject.toml'
+            'uv.lock'
+            'scripts/release'
+            'scripts/release_verify.py'
+            'tests/release'
+            '.github/workflows/release-verify.yml'
+          )
+          if git diff --quiet "$last_sha" HEAD -- "${paths[@]}"; then
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            echo "reason=no relevant changes since $last_sha" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            echo "reason=relevant changes since $last_sha" >> "$GITHUB_OUTPUT"
+          fi
+
+      - run: echo "Gate decision — should_run=${{ steps.decide.outputs.should_run }} (${{ steps.decide.outputs.reason }})"
+
   release-verify:
+    needs: gate
+    if: needs.gate.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write      # for git push (creating fix branches)

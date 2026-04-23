@@ -14,11 +14,12 @@ hooks:
     stop_unique_substring: "# precompact"
 
 uv_receipt:
-  required_fields:
-    - tool
-    - version
-    - install_type
+  # uv writes a [tool] table with 'requirements' and 'entrypoints' arrays.
+  # The check asserts both arrays contain an entry naming the tool, and that
+  # the entrypoint has a populated 'install-path'. See
+  # scripts/release/assertions.py::check_uv_receipt for the exact shape.
   tool_name: "memory-bank"
+  entrypoint_name: "memory-bank"
 
 commands:
   exit_zero:

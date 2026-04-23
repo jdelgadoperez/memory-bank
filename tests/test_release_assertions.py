@@ -53,23 +53,47 @@ def test_check_marker_uniqueness_pass():
     assert result.status == "PASS"
 
 
+def _valid_receipt() -> dict:
+    return {
+        "tool": {
+            "requirements": [{"name": "memory-bank", "editable": "/some/path"}],
+            "entrypoints": [
+                {
+                    "name": "memory-bank",
+                    "install-path": "/home/runner/.local/bin/memory-bank",
+                    "from": "memory-bank",
+                }
+            ],
+        }
+    }
+
+
 def test_check_uv_receipt_pass():
-    receipt = {"tool": "memory-bank", "version": "0.2.0", "install_type": "editable"}
     spec = load_assertions()
-    result = check_uv_receipt(receipt, spec["uv_receipt"])
+    result = check_uv_receipt(_valid_receipt(), spec["uv_receipt"])
     assert result.status == "PASS"
 
 
-def test_check_uv_receipt_missing_field():
-    receipt = {"tool": "memory-bank", "version": "0.2.0"}
+def test_check_uv_receipt_missing_tool_table():
+    spec = load_assertions()
+    result = check_uv_receipt({}, spec["uv_receipt"])
+    assert result.status == "FAIL"
+    assert "[tool] table" in result.diff
+
+
+def test_check_uv_receipt_wrong_requirement_name():
+    receipt = _valid_receipt()
+    receipt["tool"]["requirements"] = [{"name": "other-tool"}]
     spec = load_assertions()
     result = check_uv_receipt(receipt, spec["uv_receipt"])
     assert result.status == "FAIL"
-    assert "install_type" in result.diff
+    assert "tool.requirements" in result.diff
 
 
-def test_check_uv_receipt_wrong_name():
-    receipt = {"tool": "other-tool", "version": "0.2.0", "install_type": "wheel"}
+def test_check_uv_receipt_missing_entrypoint_install_path():
+    receipt = _valid_receipt()
+    receipt["tool"]["entrypoints"] = [{"name": "memory-bank", "from": "memory-bank"}]
     spec = load_assertions()
     result = check_uv_receipt(receipt, spec["uv_receipt"])
     assert result.status == "FAIL"
+    assert "install-path" in result.diff

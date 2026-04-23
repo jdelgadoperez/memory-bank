@@ -113,34 +113,66 @@ def check_marker_uniqueness(
 
 
 def check_uv_receipt(receipt: dict[str, Any], spec: dict[str, Any]) -> CheckResult:
-    """Verify uv installation receipt has required fields and correct tool name.
+    """Verify the uv installation receipt has the expected shape.
+
+    The actual layout uv writes to ``uv-receipt.toml`` is::
+
+        [tool]
+        requirements = [{name = "memory-bank", ...}]
+        entrypoints  = [{name = "memory-bank", install-path = "...", from = "..."}]
+
+    So this check validates that the receipt has a ``tool`` table with both a
+    ``requirements`` list containing the expected tool name and an
+    ``entrypoints`` list containing the expected entrypoint name with a
+    populated ``install-path``.
 
     Args:
-        receipt: Installation receipt dict.
-        spec: Spec dict with 'required_fields' and 'tool_name' keys.
+        receipt: Parsed ``uv-receipt.toml`` dict.
+        spec: Spec dict with ``tool_name`` (and optionally ``entrypoint_name``,
+            defaulting to ``tool_name``).
 
     Returns:
-        CheckResult with PASS if valid, FAIL with missing fields or wrong tool name.
+        CheckResult with PASS if shape matches, FAIL otherwise.
     """
-    missing = [f for f in spec.get("required_fields", []) if f not in receipt]
-    wrong_name = receipt.get("tool") != spec.get("tool_name")
+    tool_name = spec.get("tool_name", "")
+    entrypoint_name = spec.get("entrypoint_name", tool_name)
 
-    issues: list[str] = []
-    if missing:
-        issues.append(f"missing fields: {missing}")
-    if wrong_name:
-        issues.append(
-            f"tool name: expected {spec['tool_name']!r}, got {receipt.get('tool')!r}"
-        )
-
-    if issues:
-        diff = "\n".join(f"- {i}" for i in issues)
+    tool_section = receipt.get("tool")
+    if not isinstance(tool_section, dict):
         return CheckResult(
             name="uv_receipt_shape",
             status="FAIL",
             expected=str(spec),
             actual=str(receipt),
-            diff=diff,
+            diff=f"- expected a [tool] table, got {type(tool_section).__name__}",
+        )
+
+    requirements = tool_section.get("requirements") or []
+    entrypoints = tool_section.get("entrypoints") or []
+
+    issues: list[str] = []
+
+    if not isinstance(requirements, list) or not any(
+        isinstance(r, dict) and r.get("name") == tool_name for r in requirements
+    ):
+        issues.append(f"tool.requirements missing entry with name={tool_name!r}")
+
+    matching_entrypoints = [
+        e for e in entrypoints
+        if isinstance(e, dict) and e.get("name") == entrypoint_name
+    ]
+    if not matching_entrypoints:
+        issues.append(f"tool.entrypoints missing entry with name={entrypoint_name!r}")
+    elif not any(e.get("install-path") for e in matching_entrypoints):
+        issues.append(f"tool.entrypoints[name={entrypoint_name!r}] missing 'install-path'")
+
+    if issues:
+        return CheckResult(
+            name="uv_receipt_shape",
+            status="FAIL",
+            expected=str(spec),
+            actual=str(receipt),
+            diff="\n".join(f"- {i}" for i in issues),
         )
     return CheckResult(
         name="uv_receipt_shape",
