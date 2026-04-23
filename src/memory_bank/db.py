@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import math
 import os
+import re
 import struct
 import subprocess
 import time
@@ -148,13 +149,13 @@ def _resolve_qdrant_url(storage_path: Path) -> str | None:
 
     if _docker_daemon_running():
         from rich.console import Console
-        Console().print(
+        Console(stderr=True).print(
             "[dim]→ Starting Qdrant via Docker "
             f"({QDRANT_CONTAINER_NAME} on localhost:6333)…[/dim]"
         )
         if _ensure_qdrant_container(storage_path):
             return QDRANT_DOCKER_URL
-        Console().print(
+        Console(stderr=True).print(
             "[yellow]⚠ Docker container failed to start — "
             "falling back to embedded Qdrant.[/yellow]"
         )
@@ -171,8 +172,6 @@ def parse_time_expr(expr: str) -> str:
       - Absolute: "2025-01-01", "2025-01-01T12:00:00", or any dateutil-parseable string
     Returns an ISO 8601 string like "2025-01-01T00:00:00+00:00".
     """
-    import re
-
     expr = expr.strip()
     m = re.fullmatch(r"(\d+)([hdwmy])", expr, re.IGNORECASE)
     if m:
@@ -254,45 +253,47 @@ class MemoryDB:
     @contextmanager
     def _connect(self) -> Generator[QdrantClient, None, None]:
         """Acquire the Qdrant client for the duration of an operation."""
-        if self._url:
-            client = QdrantClient(url=self._url, timeout=3)
-        else:
-            # Embedded mode — intercept the 20k UserWarning and surface it cleanly
-            with warnings.catch_warnings(record=True) as caught:
-                warnings.simplefilter("always")
-                try:
-                    client = QdrantClient(path=str(self.path))
-                except RuntimeError as exc:
-                    if "already accessed by another instance" in str(exc):
-                        raise DatabaseLockedError(
-                            f"Database is locked by another process.\n"
-                            f"Storage path: {self.path}\n"
-                            f"If the UI server is running, stop it with "
-                            f"'memory-bank ui stop' or Ctrl+C,\n"
-                            f"or use the UI's built-in search at http://127.0.0.1:6333."
-                        ) from exc
-                    raise
-            for w in caught:
-                if (
-                    issubclass(w.category, UserWarning)
-                    and "Local mode is not recommended" in str(w.message)
-                ):
-                    from rich.console import Console
-                    Console().print(
-                        "[yellow]⚠ Collection exceeds 20k points — embedded Qdrant "
-                        "may be slow. Install Docker to enable automatic server mode.[/yellow]"
-                    )
-                else:
-                    warnings.warn_explicit(
-                        w.message, w.category, w.filename, w.lineno
-                    )
+        client: QdrantClient | None = None
         try:
+            if self._url:
+                client = QdrantClient(url=self._url, timeout=30)
+            else:
+                # Embedded mode — intercept the 20k UserWarning and surface it cleanly
+                with warnings.catch_warnings(record=True) as caught:
+                    warnings.simplefilter("always")
+                    try:
+                        client = QdrantClient(path=str(self.path))
+                    except RuntimeError as exc:
+                        if "already accessed by another instance" in str(exc):
+                            raise DatabaseLockedError(
+                                f"Database is locked by another process.\n"
+                                f"Storage path: {self.path}\n"
+                                f"If the UI server is running, stop it with "
+                                f"'memory-bank ui stop' or Ctrl+C,\n"
+                                f"or use the UI's built-in search at http://127.0.0.1:6333."
+                            ) from exc
+                        raise
+                for w in caught:
+                    if (
+                        issubclass(w.category, UserWarning)
+                        and "Local mode is not recommended" in str(w.message)
+                    ):
+                        from rich.console import Console
+                        Console(stderr=True).print(
+                            "[yellow]⚠ Collection exceeds 20k points — embedded Qdrant "
+                            "may be slow. Install Docker to enable automatic server mode.[/yellow]"
+                        )
+                    else:
+                        warnings.warn_explicit(
+                            w.message, w.category, w.filename, w.lineno
+                        )
             if not self._collections_verified:
                 self._ensure_collection(client)
                 self._collections_verified = True
             yield client
         finally:
-            client.close()
+            if client is not None:
+                client.close()
 
     def _ensure_collection(self, client: QdrantClient) -> None:
         existing = {c.name for c in client.get_collections().collections}
@@ -311,8 +312,11 @@ class MemoryDB:
                         field_name=field,
                         field_schema=PayloadSchemaType.KEYWORD,
                     )
-                except Exception:
-                    pass  # index already exists — safe to ignore
+                except Exception as exc:
+                    # Qdrant raises when the index already exists — safe to ignore.
+                    # Re-raise anything that doesn't look like an "already exists" error.
+                    if "already exists" not in str(exc).lower():
+                        raise
 
     # ------------------------------------------------------------------
     # Write
@@ -429,8 +433,15 @@ class MemoryDB:
         try:
             idx = timestamps.index(timestamp)
         except ValueError:
-            # Timestamp not found exactly — find nearest
-            idx = min(range(len(timestamps)), key=lambda i: abs(timestamps[i] != timestamp))
+            # Timestamp not found exactly — parse and find nearest by time delta.
+            def _ts_seconds(ts: str) -> float:
+                try:
+                    from dateutil import parser as dtp
+                    return dtp.parse(ts).timestamp()
+                except Exception:
+                    return 0.0
+            target_sec = _ts_seconds(timestamp)
+            idx = min(range(len(timestamps)), key=lambda i: abs(_ts_seconds(timestamps[i]) - target_sec))
 
         start = max(0, idx - n)
         end = min(len(all_msgs), idx + n + 1)
@@ -535,6 +546,28 @@ class MemoryDB:
         for s in result:
             s.pop("title_ts", None)
         return result
+
+    def list_summarized_session_ids(self, since: str | None = None) -> set[str]:
+        """Return session_ids that already have a stored summary record."""
+        flt = self._build_filter(role="summary")
+        session_ids: set[str] = set()
+        with self._connect() as client:
+            offset = None
+            while True:
+                batch, offset = client.scroll(
+                    collection_name=COLLECTION,
+                    scroll_filter=flt,
+                    limit=500,
+                    offset=offset,
+                    with_payload=["session_id", "timestamp"],
+                )
+                for r in batch:
+                    if since and r.payload.get("timestamp", "") < since:
+                        continue
+                    session_ids.add(r.payload.get("session_id", ""))
+                if offset is None:
+                    break
+        return session_ids
 
     # ------------------------------------------------------------------
     # Stats
