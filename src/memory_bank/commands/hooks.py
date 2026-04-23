@@ -213,7 +213,7 @@ def install(trigger, settings_path):
     [bold]SessionStart hook[/bold]: at session start, searches the DB for past work
     related to the current project, writes a brief summary to
     [dim]~/.memory-bank/context.md[/dim], and injects it into the project's
-    [dim]CLAUDE.md[/dim] so Claude Code picks it up automatically.
+    [dim]CLAUDE.local.md[/dim] (untracked) so Claude Code picks it up automatically.
 
     Appends entries to settings.json. Existing hooks are preserved.
     Re-running is safe — already-installed hooks are skipped.
@@ -263,38 +263,52 @@ def install(trigger, settings_path):
             console.print(
                 "\n[dim]SessionStart hook writes context to "
                 "[bold]~/.memory-bank/context.md[/bold] and injects it into "
-                "the project's [bold]CLAUDE.md[/bold].[/dim]"
+                "the project's [bold]CLAUDE.local.md[/bold] (untracked).[/dim]"
             )
     else:
         console.print("[dim]Nothing changed.[/dim]")
 
 
-def _inject_claude_md(project_root: Path, content: str) -> None:
-    """Inject or update the memory-bank section in the project's CLAUDE.md.
+def _inject_claude_local(project_root: Path, content: str) -> None:
+    """Inject or update the memory-bank section in the project's CLAUDE.local.md.
 
-    Uses HTML comment markers to fence the memory-bank block so the rest of
-    the file is preserved exactly.  Safe to call repeatedly — existing block
-    is replaced, new block is appended if not present.
+    CLAUDE.local.md is the conventional untracked sibling to CLAUDE.md that
+    Claude Code auto-loads. Writing there keeps per-session context out of
+    version control.
+
+    Uses HTML comment markers to fence the memory-bank block so any other
+    content the user keeps in CLAUDE.local.md is preserved. Safe to call
+    repeatedly — existing block is replaced, new block is appended if not
+    present.
+
+    Also strips a legacy memory-bank block from a tracked CLAUDE.md if one
+    is present, so the historical injection stops appearing in diffs.
     """
-    claude_md = project_root / "CLAUDE.md"
+    claude_local = project_root / "CLAUDE.local.md"
     start_marker = "<!-- memory-bank:start -->"
     end_marker = "<!-- memory-bank:end -->"
     block = f"{start_marker}\n{content}\n{end_marker}\n"
+    pattern = re.compile(
+        r"\n*<!-- memory-bank:start -->.*?<!-- memory-bank:end -->\n?",
+        re.DOTALL,
+    )
 
-    if claude_md.exists():
-        existing = claude_md.read_text()
-        pattern = re.compile(
-            r"<!-- memory-bank:start -->.*?<!-- memory-bank:end -->\n?",
-            re.DOTALL,
-        )
+    if claude_local.exists():
+        existing = claude_local.read_text()
         if pattern.search(existing):
-            new_text = pattern.sub(block, existing)
+            new_text = pattern.sub("\n\n" + block, existing)
         else:
             new_text = existing.rstrip("\n") + "\n\n" + block
     else:
         new_text = block
 
-    claude_md.write_text(new_text)
+    claude_local.write_text(new_text)
+
+    legacy = project_root / "CLAUDE.md"
+    if legacy.exists():
+        legacy_text = legacy.read_text()
+        if pattern.search(legacy_text):
+            legacy.write_text(pattern.sub("", legacy_text).rstrip("\n") + "\n")
 
 
 @hooks.command("context-summary", context_settings=CONTEXT_SETTINGS, hidden=True)
@@ -372,13 +386,13 @@ def context_summary(db, limit):
     out_path.write_text(summary_text)
     console.print(f"[dim]Context summary written to {out_path}[/dim]")
 
-    # Also inject into project CLAUDE.md for automatic Claude Code pickup
+    # Inject into project CLAUDE.local.md (untracked) for automatic Claude Code pickup
     if project_root:
         try:
-            _inject_claude_md(project_root, summary_text)
-            console.print(f"[dim]Injected context into {project_root / 'CLAUDE.md'}[/dim]")
+            _inject_claude_local(project_root, summary_text)
+            console.print(f"[dim]Injected context into {project_root / 'CLAUDE.local.md'}[/dim]")
         except Exception as exc:
-            console.print(f"[yellow]Warning:[/yellow] could not update CLAUDE.md: {exc}")
+            console.print(f"[yellow]Warning:[/yellow] could not update CLAUDE.local.md: {exc}")
 
 
 @hooks.command("recall", context_settings=CONTEXT_SETTINGS, hidden=True)

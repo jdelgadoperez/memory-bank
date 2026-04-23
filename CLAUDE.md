@@ -91,7 +91,7 @@ memory-bank hooks uninstall
 
 The **Stop hook** runs `memory-bank ingest claude-code` in the background after each session ends. Output goes to `~/.memory-bank/ingest.log`.
 
-The **SessionStart hook** searches the DB for relevant past work related to the current project, writes a summary to `~/.memory-bank/context.md`, and injects that context into the project's `CLAUDE.md` file (fenced with HTML comment markers) so Claude Code picks it up automatically at session start.
+The **SessionStart hook** searches the DB for relevant past work related to the current project, writes a summary to `~/.memory-bank/context.md`, and injects that context into the project's `CLAUDE.local.md` (untracked, fenced with HTML comment markers) so Claude Code picks it up automatically at session start without polluting version control.
 
 The **PreCompact hook** runs `memory-bank ingest claude-code` before context compaction, ensuring the full transcript is captured in the vector DB before Claude Code prunes it.
 
@@ -277,29 +277,3 @@ src/memory_bank/
 scripts/
 └── search_agent.py        — Agentic search via Anthropic API
 ```
-
-<!-- memory-bank:start -->
-# Memory Bank Context  ·  2026-04-16 20:15 UTC
-Project: **memory-bank**
-
-## Relevant past work
-
-**[user]** 2026-04-16  |  project: memory-bank  |  session: `6af1b467-d029-4f`
-> [tool_result: memory-bank v0.1.0
-- memory-bank]
-
-**[user]** 2026-04-16  |  project: memory-bank  |  session: `6af1b467-d029-4f`
-> [tool_result: memory-bank v0.1.0
-- memory-bank]
-
-**[user]** 2026-04-03  |  project: memory-bank  |  session: `8072ef43-07f9-43`
-> byline ideas for memory-bank
-
-**[user]** 2026-04-16  |  project: memory-bank  |  session: `6af1b467-d029-4f`
-> [tool_result: memory-recall
-memory-search]
-
-**[assistant]** 2026-04-03  |  project: memory-bank  |  session: `agent-a98f439068`
-> [tool:Glob {"pattern": "/Users/jessdelgadoperez/projects/memory-bank/skills/memory-recall/SKILL.md"}]
-
-<!-- memory-bank:end -->
