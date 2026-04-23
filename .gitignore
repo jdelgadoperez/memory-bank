@@ -10,6 +10,7 @@ build/
 .venv/
 venv/
 .claude/settings.local.json
+CLAUDE.local.md
 docs/superpowers
 .llm/
 .github/hooks/icm.json
