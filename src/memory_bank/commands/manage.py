@@ -68,11 +68,13 @@ def stats(db):
 @cli.command(context_settings=CONTEXT_SETTINGS)
 @click.argument("source", required=False, default=None)
 @click.option(
-    "--since",
+    "--before",
+    "--since",  # hidden alias kept for backwards compatibility
+    "before",
     default=None,
     metavar="EXPR",
     help=(
-        "Delete messages older than this time instead of a whole source. "
+        "Delete messages older than this cutoff. "
         "Accepts [dim]7d[/dim], [dim]30d[/dim], [dim]2025-01-01[/dim], etc. "
         "Can be combined with SOURCE to scope the prune."
     ),
@@ -90,29 +92,29 @@ def stats(db):
     is_flag=True,
     help="Skip the confirmation prompt.",
 )
-def delete(source, since, db, yes):
+def delete(source, before, db, yes):
     """Delete ingested messages by source and/or age.
 
     SOURCE (optional) must match the source name exactly (e.g. claude-code).
-    Use [dim]--since[/dim] to prune old data without wiping a whole source.
-    Either SOURCE or [dim]--since[/dim] (or both) must be provided.
+    Use [dim]--before[/dim] to prune old data without wiping a whole source.
+    Either SOURCE or [dim]--before[/dim] (or both) must be provided.
 
     Use 'memory-bank stats' to see available source names.
 
     \b
     Examples:
       memory-bank delete claude-desktop
-      memory-bank delete --since 30d
-      memory-bank delete claude-code --since 90d
+      memory-bank delete --before 30d
+      memory-bank delete claude-code --before 90d
     """
     from memory_bank.db import DatabaseLockedError, MemoryDB, parse_time_expr
 
-    if not source and not since:
-        raise click.UsageError("Provide SOURCE, --since, or both.")
+    if not source and not before:
+        raise click.UsageError("Provide SOURCE, --before, or both.")
 
-    if since:
-        since_iso = parse_time_expr(since)
-        desc = f"messages older than {since}"
+    if before:
+        since_iso = parse_time_expr(before)
+        desc = f"messages older than {before}"
         if source:
             desc += f" from source '{source}'"
         prompt = f"Delete {desc}?"
@@ -126,7 +128,7 @@ def delete(source, since, db, yes):
     db_obj = MemoryDB(Path(db) if db else None)
 
     try:
-        if since:
+        if before:
             n = db_obj.delete_before(since_iso, source=source)
             console.print(
                 f"[bold green]Deleted[/bold green] [cyan]{n}[/cyan] messages "
