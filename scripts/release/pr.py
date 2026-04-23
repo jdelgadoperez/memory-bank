@@ -75,6 +75,17 @@ def open_pr(
     return result.stdout.strip()
 
 
+def _ensure_label(name: str, color: str = "ededed", description: str = "") -> None:
+    """Idempotently create a GitHub label so 'gh issue create --label' won't fail."""
+    subprocess.run(
+        ["gh", "label", "create", name, "--color", color, "--description", description, "--force"],
+        capture_output=True,
+        text=True,
+        cwd=str(REPO_ROOT),
+        check=False,
+    )
+
+
 def open_issue(check_name: str, iteration_log: str) -> str:
     body = (
         f"## Release verify agent exhausted retries\n\n"
@@ -82,6 +93,7 @@ def open_issue(check_name: str, iteration_log: str) -> str:
         f"## Iteration log\n\n```\n{iteration_log}\n```\n\n"
         f"_Auto-generated. Manual fix required._"
     )
+    _ensure_label("automated", description="Created by automation")
     result = subprocess.run(
         [
             "gh",
