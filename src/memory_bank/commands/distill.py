@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import os
-import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -12,47 +11,62 @@ from memory_bank.cli import CONTEXT_SETTINGS, cli, console
 from memory_bank.db import MemoryDB, parse_time_expr
 from memory_bank.schema import ChatMessage
 
-DISTILL_MODEL = "claude-haiku-4-5-20251001"
+DISTILL_MODEL = "claude-haiku-3-5-20241022"
 DISTILL_MAX_TOKENS = 400
-TRANSCRIPT_MAX_CHARS = 5_000
+TRANSCRIPT_MAX_CHARS = 8_000
 SUMMARY_ROLE = "summary"
 
 _SYSTEM_PROMPT = (
-    "You are a concise technical summarizer. "
-    "Given assistant responses from a coding session, produce 3-5 bullet points covering:\n"
-    "- What was built, fixed, or changed\n"
-    "- Key decisions made\n"
-    "- Problems encountered and how they were resolved\n"
-    "- Patterns or techniques used\n"
-    "Be specific. Omit pleasantries, meta-discussion, and filler. "
-    "Output only the bullet list, nothing else."
+    "You are a precise technical summarizer for coding session transcripts. "
+    "Your output will be stored as a searchable memory record.\n\n"
+    "Rules:\n"
+    "- Output ONLY a bullet list using '-' as the prefix. No preamble, no headers, no trailing prose.\n"
+    "- Produce 3-5 bullets. Each bullet must be a single line.\n"
+    "- Stay strictly within the provided transcript. Do not infer or speculate.\n"
+    "- If something is unclear from the transcript, omit it rather than guess.\n\n"
+    "Cover (where present in the transcript):\n"
+    "- What was built, fixed, or changed (be specific: file names, function names, commands)\n"
+    "- Key decisions and the reason given for them\n"
+    "- Errors encountered and the resolution applied\n"
+    "- Patterns, techniques, or tools used"
 )
 
 
-def _build_transcript(messages: list[dict]) -> str:
+def _build_transcript(messages: list[dict[str, object]]) -> str:
     parts: list[str] = []
     for msg in messages:
-        if msg.get("role") != "assistant":
-            continue
-        content = (msg.get("content") or "").strip()
+        role = msg.get("role", "")
+        content = (msg.get("content") or "").strip()  # type: ignore[union-attr]
         if not content:
             continue
         if content.startswith("[tool:") or content.startswith("[tool_result:"):
             continue
-        parts.append(content)
-    return "\n\n".join(parts)[:TRANSCRIPT_MAX_CHARS]
+        if role == "user":
+            parts.append(f"[User]: {content[:150]}")
+        elif role == "assistant":
+            parts.append(content)
+    joined = "\n\n".join(parts)
+    # Prefer the end of the transcript (resolutions appear last).
+    if len(joined) > TRANSCRIPT_MAX_CHARS:
+        joined = joined[-TRANSCRIPT_MAX_CHARS:]
+    return joined
 
 
-def _summarize(transcript: str, api_key: str) -> str:
+def _summarize(transcript: str, api_key: str, *, project: str = "") -> str:
     import anthropic
+
+    header = f"Project: {project}\n\n---\n\n" if project else ""
+    user_content = header + transcript
 
     client = anthropic.Anthropic(api_key=api_key)
     response = client.messages.create(
         model=DISTILL_MODEL,
         max_tokens=DISTILL_MAX_TOKENS,
-        system=_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": transcript}],
+        system=[{"type": "text", "text": _SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}],
+        messages=[{"role": "user", "content": user_content}],
     )
+    if not response.content:
+        raise ValueError("API returned empty content list")
     return response.content[0].text.strip()
 
 
@@ -95,12 +109,9 @@ def distill(since: str, dry_run: bool, db_path: str | None) -> None:
     """
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key and not dry_run:
-        console.print(
-            "[bold red]Error:[/bold red] ANTHROPIC_API_KEY is not set. "
-            "Export it or pass it as an environment variable.",
-            file=sys.stderr,
+        raise click.ClickException(
+            "ANTHROPIC_API_KEY is not set. Export it before running distill."
         )
-        raise SystemExit(1)
 
     since_iso = parse_time_expr(since)
     db = MemoryDB(Path(db_path) if db_path else None)
@@ -110,14 +121,9 @@ def distill(since: str, dry_run: bool, db_path: str | None) -> None:
         console.print(f"[dim]No sessions found since {since}.[/dim]")
         return
 
-    # Find sessions already summarized in this window so we can skip them.
-    existing_summaries = db.search(
-        query="work done decisions problems resolved",
-        role=SUMMARY_ROLE,
-        since=since_iso,
-        limit=500,
-    )
-    already_summarized: set[str] = {r["session_id"] for r in existing_summaries}
+    # Find sessions already summarized in this window via a role-filtered scroll.
+    # Using scroll (not semantic search) avoids false negatives from embedding distance.
+    already_summarized: set[str] = db.list_summarized_session_ids(since=since_iso)
 
     # Filter out summary pseudo-sessions and already-summarized real sessions.
     pending = [
@@ -162,7 +168,7 @@ def distill(since: str, dry_run: bool, db_path: str | None) -> None:
             continue
 
         try:
-            summary_text = _summarize(transcript, api_key)
+            summary_text = _summarize(transcript, api_key, project=project)
         except Exception as exc:
             console.print(f"  [red]error[/red] {label} — {exc}")
             skipped += 1
