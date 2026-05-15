@@ -106,7 +106,11 @@ def _ensure_qdrant_container(storage_path: Path) -> bool:
         return True  # already running
 
     if inspect.returncode == 0:
-        # Container exists but stopped
+        # Container exists but stopped — ensure restart policy is set before starting
+        subprocess.run(
+            ["docker", "update", "--restart", "unless-stopped", QDRANT_CONTAINER_NAME],
+            capture_output=True,
+        )
         subprocess.run(["docker", "start", QDRANT_CONTAINER_NAME], capture_output=True)
     else:
         # Create and start a new container
