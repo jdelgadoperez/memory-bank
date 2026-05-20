@@ -257,7 +257,7 @@ def _run_ingest(ingestor, db_path: Path | None = None, _drain: bool = True):
         f"[bold green]✓[/bold green] [cyan]{source}[/cyan]: "
         f"found [bold]{result.total_found}[/bold] messages, "
         f"[cyan]{result.inserted}[/cyan] inserted, "
-        f"[dim]{result.skipped} already existed[/dim]"
+        f"[dim]{result.skipped} duplicates skipped[/dim]"
     )
 
     if _drain:
