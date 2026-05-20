@@ -42,7 +42,7 @@ class TestDetectInstallDir:
             fake_python = venv_bin / "python"
             fake_python.touch()
             result = _detect_install_dir(str(fake_python))
-            assert result == Path(tmpdir).resolve()
+            assert result == Path(tmpdir)
 
 
 class TestUpdateCommand:

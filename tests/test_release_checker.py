@@ -58,5 +58,6 @@ def test_run_checks_returns_scenario_result():
 
 def test_read_settings_json_missing(tmp_path):
     scenario = InstalledScenario("w", MB_BIN, tmp_path, {})
-    result = _read_settings_json(scenario)
+    with patch.dict("os.environ", {"HOME": str(tmp_path)}):
+        result = _read_settings_json(scenario)
     assert result == {}
