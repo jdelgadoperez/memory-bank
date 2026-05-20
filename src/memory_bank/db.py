@@ -580,7 +580,8 @@ class MemoryDB:
 
     def stats(self) -> dict[str, Any]:
         with self._connect() as client:
-            count = client.count(COLLECTION).count
+            flt = self._build_filter()
+            count = client.count(COLLECTION, count_filter=flt).count
 
             # Count by source via scroll
             source_counts: dict[str, int] = {}
@@ -588,6 +589,7 @@ class MemoryDB:
             while True:
                 records, offset = client.scroll(
                     collection_name=COLLECTION,
+                    scroll_filter=flt,
                     limit=1000,
                     offset=offset,
                     with_payload=["source"],
@@ -675,7 +677,7 @@ class MemoryDB:
 
         if hard:
             to_delete: list[int] = []
-            flt = Filter(must=must) if must else None
+            flt = Filter(must=must)
             with self._connect() as client:
                 offset = None
                 while True:

@@ -46,8 +46,7 @@ class TestSoftDelete:
             db.delete_by_source("test", hard=False)
 
         mock_client.set_payload.assert_called_once()
-        call_kwargs = mock_client.set_payload.call_args
-        payload = call_kwargs[1]["payload"] if call_kwargs[1] else call_kwargs[0][1]
+        payload = mock_client.set_payload.call_args.kwargs["payload"]
         assert payload["is_deleted"] is True
         assert "deleted_at" in payload
 
@@ -87,6 +86,40 @@ class TestSoftDelete:
         assert any(
             c == deleted_condition for c in flt.must_not
         ), "Filter must exclude is_deleted=True points"
+
+    def test_delete_before_soft_skips_future_messages(self):
+        """Soft delete_before only marks messages older than cutoff, not newer ones."""
+        from datetime import datetime, timedelta, timezone
+        old_ts = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
+        new_ts = datetime.now(timezone.utc).isoformat()
+
+        mock_client = MagicMock()
+        mock_client.get_collections.return_value = MagicMock(collections=[])
+        mock_client.scroll.return_value = (
+            [
+                MagicMock(id=1, payload={"timestamp": old_ts}),
+                MagicMock(id=2, payload={"timestamp": new_ts}),
+            ],
+            None,
+        )
+
+        db = MemoryDB.__new__(MemoryDB)
+        db._url = None
+        db._embedder = None
+        db._embedder_loaded = True
+        db._collections_verified = True
+
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=5)).isoformat()
+
+        with patch.object(db, "_connect") as mock_connect:
+            mock_connect.return_value.__enter__ = lambda s: mock_client
+            mock_connect.return_value.__exit__ = MagicMock(return_value=False)
+            count = db.delete_before(cutoff)
+
+        assert count == 1
+        mock_client.set_payload.assert_called_once()
+        points = mock_client.set_payload.call_args.kwargs["points"]
+        assert points == [1]
 
     def test_purge_expired_hard_deletes_old_soft_deleted(self):
         """purge_expired hard-deletes points soft-deleted more than 90 days ago."""
