@@ -190,6 +190,16 @@ def _run_ingest(ingestor, db_path: Path | None = None, _drain: bool = True):
         return result
 
     router = resolve_router(db_path=db_path)
+
+    # Purge soft-deleted records older than 90 days
+    try:
+        if hasattr(router, "_db"):
+            purged = router._db.purge_expired(days=90)
+            if purged:
+                console.print(f"[dim]Purged {purged} expired soft-deleted records.[/dim]")
+    except Exception:
+        pass  # purge failure never blocks ingest
+
     if type(router).__name__ == "HttpRouter":
         route_label = "via UI server"
     elif getattr(getattr(router, "_db", None), "_url", None):

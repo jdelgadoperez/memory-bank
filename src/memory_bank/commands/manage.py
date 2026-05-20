@@ -69,7 +69,7 @@ def stats(db):
 @click.argument("source", required=False, default=None)
 @click.option(
     "--before",
-    "--since",  # hidden alias kept for backwards compatibility
+    "--since",
     "before",
     default=None,
     metavar="EXPR",
@@ -78,6 +78,12 @@ def stats(db):
         "Accepts [dim]7d[/dim], [dim]30d[/dim], [dim]2025-01-01[/dim], etc. "
         "Can be combined with SOURCE to scope the prune."
     ),
+)
+@click.option(
+    "--hard",
+    is_flag=True,
+    default=False,
+    help="Permanently remove records immediately instead of soft-deleting them.",
 )
 @click.option(
     "--db",
@@ -92,8 +98,11 @@ def stats(db):
     is_flag=True,
     help="Skip the confirmation prompt.",
 )
-def delete(source, before, db, yes):
+def delete(source, before, hard, db, yes):
     """Delete ingested messages by source and/or age.
+
+    Soft-deletes by default (recoverable, purged after 90 days).
+    Use [dim]--hard[/dim] to permanently remove records immediately.
 
     SOURCE (optional) must match the source name exactly (e.g. claude-code).
     Use [dim]--before[/dim] to prune old data without wiping a whole source.
@@ -106,21 +115,24 @@ def delete(source, before, db, yes):
       memory-bank delete claude-desktop
       memory-bank delete --before 30d
       memory-bank delete claude-code --before 90d
+      memory-bank delete claude-code --hard
     """
     from memory_bank.db import DatabaseLockedError, MemoryDB, parse_time_expr
 
     if not source and not before:
         raise click.UsageError("Provide SOURCE, --before, or both.")
 
+    delete_type = "Permanently delete" if hard else "Soft-delete"
+
     if before:
         since_iso = parse_time_expr(before)
         desc = f"messages older than {before}"
         if source:
             desc += f" from source '{source}'"
-        prompt = f"Delete {desc}?"
+        prompt = f"{delete_type} {desc}?"
     else:
         desc = f"all messages from source '{source}'"
-        prompt = f"Delete {desc}?"
+        prompt = f"{delete_type} {desc}?"
 
     if not yes:
         click.confirm(prompt, abort=True)
@@ -129,17 +141,19 @@ def delete(source, before, db, yes):
 
     try:
         if before:
-            n = db_obj.delete_before(since_iso, source=source)
+            n = db_obj.delete_before(since_iso, source=source, hard=hard)
+            action = "Deleted" if hard else "Soft-deleted"
             console.print(
-                f"[bold green]Deleted[/bold green] [cyan]{n}[/cyan] messages "
-                f"older than [bold]{since}[/bold]"
+                f"[bold green]{action}[/bold green] [cyan]{n}[/cyan] messages "
+                f"older than [bold]{before}[/bold]"
                 + (f" from source '[bold]{source}[/bold]'" if source else "")
                 + "."
             )
         else:
-            n = db_obj.delete_by_source(source)
+            n = db_obj.delete_by_source(source, hard=hard)
+            action = "Deleted" if hard else "Soft-deleted"
             console.print(
-                f"[bold green]Deleted[/bold green] [cyan]{n}[/cyan] messages "
+                f"[bold green]{action}[/bold green] [cyan]{n}[/cyan] messages "
                 f"from source '[bold]{source}[/bold]'."
             )
     except DatabaseLockedError as exc:
