@@ -458,7 +458,8 @@ class MemoryDB:
     def get_session(self, session_id: str) -> list[dict[str, Any]]:
         """Return all messages from a session, sorted chronologically."""
         flt = Filter(
-            must=[FieldCondition(key="session_id", match=MatchValue(value=session_id))]
+            must=[FieldCondition(key="session_id", match=MatchValue(value=session_id))],
+            must_not=[FieldCondition(key="is_deleted", match=MatchValue(value=True))],
         )
         records: list[dict[str, Any]] = []
         with self._connect() as client:
@@ -613,35 +614,101 @@ class MemoryDB:
     # Delete
     # ------------------------------------------------------------------
 
-    def delete_by_source(self, source: str) -> int:
-        """Delete all messages from a given source. Returns count deleted."""
+    def delete_by_source(self, source: str, hard: bool = False) -> int:
+        """Delete all messages from a given source. Soft delete by default; hard=True removes permanently."""
+        if hard:
+            with self._connect() as client:
+                before_count = client.count(COLLECTION).count
+                client.delete(
+                    collection_name=COLLECTION,
+                    points_selector=Filter(
+                        must=[FieldCondition(key="source", match=MatchValue(value=source))]
+                    ),
+                )
+                after_count = client.count(COLLECTION).count
+            return before_count - after_count
+
+        deleted_at = datetime.now(timezone.utc).isoformat()
+        to_update: list[int] = []
         with self._connect() as client:
-            before_count = client.count(COLLECTION).count
-            client.delete(
+            offset = None
+            while True:
+                batch, offset = client.scroll(
+                    collection_name=COLLECTION,
+                    scroll_filter=Filter(
+                        must=[FieldCondition(key="source", match=MatchValue(value=source))],
+                        must_not=[FieldCondition(key="is_deleted", match=MatchValue(value=True))],
+                    ),
+                    limit=1000,
+                    offset=offset,
+                    with_payload=False,
+                    with_vectors=False,
+                )
+                to_update.extend(r.id for r in batch)
+                if offset is None:
+                    break
+
+        if not to_update:
+            return 0
+
+        with self._connect() as client:
+            client.set_payload(
                 collection_name=COLLECTION,
-                points_selector=Filter(
-                    must=[FieldCondition(key="source", match=MatchValue(value=source))]
-                ),
+                payload={"is_deleted": True, "deleted_at": deleted_at},
+                points=to_update,
             )
-            after_count = client.count(COLLECTION).count
-        return before_count - after_count
+        return len(to_update)
 
     def delete_before(
         self,
         timestamp_iso: str,
         source: str | None = None,
+        hard: bool = False,
     ) -> int:
         """
         Delete messages with timestamp < *timestamp_iso*.
-        Optionally scope to a single source.  Returns count deleted.
+        Optionally scope to a single source. Soft delete by default; hard=True removes permanently.
         """
-        # Collect IDs to delete via scroll (timestamp comparison is string-lexicographic)
-        conditions: list[FieldCondition] = []
+        must: list[FieldCondition] = []
         if source:
-            conditions.append(FieldCondition(key="source", match=MatchValue(value=source)))
-        flt = Filter(must=conditions) if conditions else None
+            must.append(FieldCondition(key="source", match=MatchValue(value=source)))
 
-        to_delete: list[int] = []
+        if hard:
+            to_delete: list[int] = []
+            flt = Filter(must=must) if must else None
+            with self._connect() as client:
+                offset = None
+                while True:
+                    batch, offset = client.scroll(
+                        collection_name=COLLECTION,
+                        scroll_filter=flt,
+                        limit=1000,
+                        offset=offset,
+                        with_payload=["timestamp"],
+                        with_vectors=False,
+                    )
+                    for r in batch:
+                        if r.payload.get("timestamp", "") < timestamp_iso:
+                            to_delete.append(r.id)
+                    if offset is None:
+                        break
+            if not to_delete:
+                return 0
+            with self._connect() as client:
+                for i in range(0, len(to_delete), 1000):
+                    client.delete(
+                        collection_name=COLLECTION,
+                        points_selector=to_delete[i : i + 1000],
+                    )
+            return len(to_delete)
+
+        # Soft delete path
+        deleted_at = datetime.now(timezone.utc).isoformat()
+        to_update: list[int] = []
+        flt = Filter(
+            must=must,
+            must_not=[FieldCondition(key="is_deleted", match=MatchValue(value=True))],
+        )
         with self._connect() as client:
             offset = None
             while True:
@@ -654,8 +721,43 @@ class MemoryDB:
                     with_vectors=False,
                 )
                 for r in batch:
-                    ts = r.payload.get("timestamp", "")
-                    if ts < timestamp_iso:
+                    if r.payload.get("timestamp", "") < timestamp_iso:
+                        to_update.append(r.id)
+                if offset is None:
+                    break
+
+        if not to_update:
+            return 0
+
+        with self._connect() as client:
+            client.set_payload(
+                collection_name=COLLECTION,
+                payload={"is_deleted": True, "deleted_at": deleted_at},
+                points=to_update,
+            )
+        return len(to_update)
+
+    def purge_expired(self, days: int = 90) -> int:
+        """Hard-delete points that were soft-deleted more than `days` days ago."""
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        to_delete: list[int] = []
+
+        with self._connect() as client:
+            offset = None
+            while True:
+                batch, offset = client.scroll(
+                    collection_name=COLLECTION,
+                    scroll_filter=Filter(
+                        must=[FieldCondition(key="is_deleted", match=MatchValue(value=True))]
+                    ),
+                    limit=1000,
+                    offset=offset,
+                    with_payload=["deleted_at"],
+                    with_vectors=False,
+                )
+                for r in batch:
+                    deleted_at = r.payload.get("deleted_at", "")
+                    if deleted_at and deleted_at < cutoff:
                         to_delete.append(r.id)
                 if offset is None:
                     break
@@ -663,7 +765,6 @@ class MemoryDB:
         if not to_delete:
             return 0
 
-        # Delete in batches of 1000
         with self._connect() as client:
             for i in range(0, len(to_delete), 1000):
                 client.delete(
@@ -701,13 +802,14 @@ class MemoryDB:
         )
         return {r.payload["id"] for r in results}
 
-    def _build_filter(self, **kwargs: str | None) -> Filter | None:
-        conditions = [
+    def _build_filter(self, **kwargs: str | None) -> Filter:
+        must = [
             FieldCondition(key=k, match=MatchValue(value=v))
             for k, v in kwargs.items()
             if v is not None
         ]
-        return Filter(must=conditions) if conditions else None
+        must_not = [FieldCondition(key="is_deleted", match=MatchValue(value=True))]
+        return Filter(must=must, must_not=must_not)
 
 
 def _id_to_uint(hex_id: str) -> int:

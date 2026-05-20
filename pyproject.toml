@@ -32,6 +32,9 @@ memory_bank = ["skills/*/SKILL.md"]
 [project.optional-dependencies]
 dev = ["ruff>=0.4", "watchfiles>=0.21", "pytest>=8.0"]
 
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+
 [tool.ruff]
 target-version = "py311"
 line-length = 100
