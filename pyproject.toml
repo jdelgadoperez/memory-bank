@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "memory-bank"
-version = "0.5.3"
+version = "0.5.4"
 description = "Ingest and search Claude chat histories using a local vector DB"
 requires-python = ">=3.11"
 dependencies = [

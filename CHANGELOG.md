@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.4] — 2026-05-26
+
+### Fixed
+- `install.sh` and manual install docs now use the GitHub URL (`git+https://github.com/jdelgadoperez/memory-bank.git`) instead of the bare PyPI name, which resolves to an unrelated third-party `memory-bank` package.
+- `memory-bank update` now correctly upgrades git-URL installs by re-running `uv tool install git+<url> --reinstall` instead of `uv tool upgrade memory-bank` (which would pick up the wrong PyPI package).
+
 ## [0.5.3] — 2026-05-26
 
 ### Fixed

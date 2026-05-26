@@ -16,7 +16,7 @@ fi
 
 # ── 2. Install memory-bank ────────────────────────────────────────────────────
 echo "→ Installing memory-bank"
-uv tool install memory-bank
+uv tool install "git+https://github.com/jdelgadoperez/memory-bank.git"
 
 # ── 3. Ensure ~/.local/bin is on PATH ─────────────────────────────────────────
 case ":$PATH:" in

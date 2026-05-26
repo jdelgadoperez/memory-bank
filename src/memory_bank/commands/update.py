@@ -48,6 +48,24 @@ def _uv_tool_local_path(executable: str | None = None) -> Path | None:
     return None
 
 
+def _uv_tool_git_url(executable: str | None = None) -> str | None:
+    """Return the git URL if memory-bank was installed from a git URL, else None.
+
+    uv writes git = "..." in uv-receipt.toml for git installs.
+    """
+    import tomllib
+
+    tool_root = _uv_tool_root(executable)
+    if tool_root is None:
+        return None
+    receipt = tool_root / "uv-receipt.toml"
+    data = tomllib.loads(receipt.read_text())
+    for req in data.get("tool", {}).get("requirements", []):
+        if "git" in req:
+            return req["git"]
+    return None
+
+
 def _detect_install_dir(executable: str | None = None) -> Path | None:
     """Resolve the memory-bank repo root from the running Python executable.
 
@@ -79,6 +97,7 @@ def _print_version_result(before: str, after: str) -> None:
 
 def _update_uv_tool(before_version: str, force: bool = False) -> None:
     local_path = _uv_tool_local_path()
+    git_url = _uv_tool_git_url()
 
     if local_path is not None:
         console.print(f"[dim]Detected local path install ({local_path}) — running git pull + uv tool install[/dim]\n")
@@ -95,20 +114,34 @@ def _update_uv_tool(before_version: str, force: bool = False) -> None:
 
         console.print("[bold]Reinstalling package[/bold]")
         cmd = ["uv", "tool", "install", str(local_path), "--reinstall"]
+    elif git_url is not None:
+        install_spec = f"git+{git_url}"
+        if force:
+            console.print(f"[dim]Detected git install ({git_url}) — running uv tool install --reinstall[/dim]\n")
+            console.print("[bold]Reinstalling package[/bold]")
+            cmd = ["uv", "tool", "install", install_spec, "--reinstall"]
+        else:
+            console.print(f"[dim]Detected git install ({git_url}) — running uv tool install --reinstall[/dim]\n")
+            console.print("[bold]Upgrading package[/bold]")
+            cmd = ["uv", "tool", "install", install_spec, "--reinstall"]
+        recovery = f"uv tool install {install_spec} --reinstall"
     else:
+        pkg = "memory-bank"
         if force:
             console.print("[dim]Detected uv tool install — running uv tool install --reinstall[/dim]\n")
             console.print("[bold]Reinstalling package[/bold]")
-            cmd = ["uv", "tool", "install", "memory-bank", "--reinstall"]
+            cmd = ["uv", "tool", "install", pkg, "--reinstall"]
         else:
             console.print("[dim]Detected uv tool install — running uv tool upgrade[/dim]\n")
             console.print("[bold]Upgrading package[/bold]")
-            cmd = ["uv", "tool", "upgrade", "memory-bank"]
+            cmd = ["uv", "tool", "upgrade", pkg]
+        recovery = f"uv tool install {pkg} --reinstall"
 
     upgrade = subprocess.run(cmd, capture_output=True, text=True)
     if upgrade.returncode != 0:
         console.print(f"[red]{upgrade.stderr.strip()}[/red]")
-        recovery = f"uv tool install {local_path} --reinstall" if local_path else "uv tool install memory-bank --reinstall"
+        if local_path is not None:
+            recovery = f"uv tool install {local_path} --reinstall"
         raise click.ClickException(
             f"Upgrade failed — see above for details.\n\n"
             f"  To recover, run: [cyan]{recovery}[/cyan]"

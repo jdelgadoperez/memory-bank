@@ -10,12 +10,12 @@ Local vector DB for ingesting and searching AI chat histories (Claude Code, Clau
 bash <(curl -fsSL https://raw.githubusercontent.com/jdelgadoperez/memory-bank/main/install.sh)
 ```
 
-Installs `uv` if needed, runs `uv tool install memory-bank`, wires hooks and MCP server, and runs an initial ingest. No repo clone required.
+Installs `uv` if needed, installs from GitHub, wires hooks and MCP server, and runs an initial ingest. No repo clone required.
 
 **Manual (uv tool)**
 
 ```bash
-uv tool install memory-bank
+uv tool install "git+https://github.com/jdelgadoperez/memory-bank.git"
 memory-bank setup install --on recommended
 memory-bank ingest claude-code
 ```
