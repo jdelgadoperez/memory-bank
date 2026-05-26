@@ -77,7 +77,7 @@ def _print_version_result(before: str, after: str) -> None:
         console.print(f"[bold green]✓ Already up to date[/bold green]  [dim]v{after}[/dim]")
 
 
-def _update_uv_tool(before_version: str) -> None:
+def _update_uv_tool(before_version: str, force: bool = False) -> None:
     local_path = _uv_tool_local_path()
 
     if local_path is not None:
@@ -96,9 +96,14 @@ def _update_uv_tool(before_version: str) -> None:
         console.print("[bold]Reinstalling package[/bold]")
         cmd = ["uv", "tool", "install", str(local_path), "--reinstall"]
     else:
-        console.print("[dim]Detected uv tool install — running uv tool upgrade[/dim]\n")
-        console.print("[bold]Upgrading package[/bold]")
-        cmd = ["uv", "tool", "upgrade", "memory-bank"]
+        if force:
+            console.print("[dim]Detected uv tool install — running uv tool install --reinstall[/dim]\n")
+            console.print("[bold]Reinstalling package[/bold]")
+            cmd = ["uv", "tool", "install", "memory-bank", "--reinstall"]
+        else:
+            console.print("[dim]Detected uv tool install — running uv tool upgrade[/dim]\n")
+            console.print("[bold]Upgrading package[/bold]")
+            cmd = ["uv", "tool", "upgrade", "memory-bank"]
 
     upgrade = subprocess.run(cmd, capture_output=True, text=True)
     if upgrade.returncode != 0:
@@ -118,7 +123,7 @@ def _update_uv_tool(before_version: str) -> None:
     console.print("\n  Hooks and MCP configuration were not changed.")
 
 
-def _update_git(resolved_dir: Path, before_version: str = "") -> None:
+def _update_git(resolved_dir: Path, before_version: str = "", force: bool = False) -> None:
     console.print(f"[dim]Install directory: {resolved_dir}[/dim]\n")
 
     console.print("[bold]Pulling latest code[/bold]")
@@ -132,9 +137,18 @@ def _update_git(resolved_dir: Path, before_version: str = "") -> None:
         raise click.ClickException("git pull failed — see above for details.")
     console.print(f"  [dim]{pull.stdout.strip()}[/dim]")
 
+    # uv sync may nuke and recreate .venv; force-load rich's unicode data now so
+    # the lazy import doesn't fail after the venv files are gone.
+    try:
+        from rich.cells import cell_len as _cell_len
+        _cell_len("preload")
+    except Exception:
+        pass
+
     console.print("\n[bold]Syncing dependencies[/bold]")
+    sync_cmd = ["uv", "sync", "--reinstall"] if force else ["uv", "sync"]
     sync = subprocess.run(
-        ["uv", "sync"],
+        sync_cmd,
         cwd=str(resolved_dir),
         capture_output=True,
         text=True,
@@ -180,7 +194,13 @@ def _update_git(resolved_dir: Path, before_version: str = "") -> None:
     metavar="DIR",
     help="Override the install directory. Auto-detected from the running binary by default.",
 )
-def update(install_dir: str | None) -> None:
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Force reinstall of all packages even if already on the latest version.",
+)
+def update(install_dir: str | None, force: bool) -> None:
     """Update memory-bank to the latest version.
 
     Detects the install type automatically:
@@ -194,6 +214,7 @@ def update(install_dir: str | None) -> None:
     \b
     Examples:
       memory-bank update
+      memory-bank update --force
       memory-bank update --dir ~/.local/share/memory-bank
     """
     before_version = _current_version()
@@ -204,12 +225,12 @@ def update(install_dir: str | None) -> None:
         resolved_dir = Path(install_dir).expanduser().resolve()
         if not resolved_dir.is_dir():
             raise click.ClickException(f"Install directory does not exist: {resolved_dir}")
-        _update_git(resolved_dir, before_version)
+        _update_git(resolved_dir, before_version, force=force)
         return
 
     # uv tool install — detected via uv-receipt.toml at the tool root
     if _detect_uv_tool_install():
-        _update_uv_tool(before_version)
+        _update_uv_tool(before_version, force=force)
         return
 
     # git-based install (install.sh)
@@ -222,4 +243,4 @@ def update(install_dir: str | None) -> None:
     if not resolved_dir.is_dir():
         raise click.ClickException(f"Install directory does not exist: {resolved_dir}")
 
-    _update_git(resolved_dir, before_version)
+    _update_git(resolved_dir, before_version, force=force)
