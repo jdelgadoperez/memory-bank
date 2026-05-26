@@ -137,6 +137,21 @@ def _update_git(resolved_dir: Path, before_version: str = "", force: bool = Fals
         raise click.ClickException("git pull failed — see above for details.")
     console.print(f"  [dim]{pull.stdout.strip()}[/dim]")
 
+    # git pull --ff-only exits 0 even when autostash reapplication leaves conflict
+    # markers (the pull itself succeeded). Detect and abort before uv sync chokes.
+    conflicts = subprocess.run(
+        ["git", "-C", str(resolved_dir), "diff", "--name-only", "--diff-filter=U"],
+        capture_output=True,
+        text=True,
+    )
+    if conflicts.stdout.strip():
+        conflicted = conflicts.stdout.strip().replace("\n", ", ")
+        raise click.ClickException(
+            f"Autostash reapplication left merge conflicts in: {conflicted}\n\n"
+            f"  Resolve with: git -C {resolved_dir} checkout -- uv.lock\n"
+            f"  Then re-run:  memory-bank update"
+        )
+
     # uv sync may nuke and recreate .venv; force-load rich's unicode data now so
     # the lazy import doesn't fail after the venv files are gone.
     try:

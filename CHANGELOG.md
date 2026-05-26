@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] — 2026-05-26
+
+### Fixed
+- `memory-bank update` now detects when `git pull --ff-only` with autostash leaves merge conflict markers (e.g. in `uv.lock`) and aborts with a clear error message and recovery instructions, instead of passing a corrupt lock file to `uv sync`.
+
 ## [0.5.1] — 2026-05-26
 
 ### Added

@@ -66,6 +66,12 @@ class TestUpdateCommand:
         output = result.output.lower()
         assert "git repository" in output or "not a git" in output or "error" in output
 
+    def _no_conflict_mock(self) -> MagicMock:
+        def side_effect(cmd, **kwargs):
+            stdout = "Already up to date.\n" if "pull" in cmd else ""
+            return MagicMock(returncode=0, stdout=stdout, stderr="")
+        return MagicMock(side_effect=side_effect)
+
     def test_runs_git_pull_and_uv_sync(self):
         from click.testing import CliRunner
 
@@ -77,7 +83,7 @@ class TestUpdateCommand:
             subprocess_module.run(["git", "init", str(repo)], check=True, capture_output=True)
             subprocess_module.run(["git", "commit", "--allow-empty", "-m", "init"],
                                    cwd=str(repo), check=True, capture_output=True, env=env)
-            mock_run = MagicMock(return_value=MagicMock(returncode=0, stdout="Already up to date.\n", stderr=""))
+            mock_run = self._no_conflict_mock()
             with patch("memory_bank.commands.update._detect_install_dir", return_value=repo), \
                     patch("memory_bank.commands.update.subprocess.run", mock_run), \
                     patch("memory_bank.commands.update._available_skills", return_value=[]):
@@ -87,6 +93,33 @@ class TestUpdateCommand:
             assert any("pull" in c for c in calls)
             assert any("uv" in c and "sync" in c for c in calls)
             assert not any("reinstall" in c for c in calls)
+
+    def test_fails_when_autostash_leaves_conflicts(self):
+        from click.testing import CliRunner
+
+        from memory_bank.cli import cli
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            env = {**os.environ, "GIT_AUTHOR_NAME": "test", "GIT_AUTHOR_EMAIL": "t@t.com",
+                   "GIT_COMMITTER_NAME": "test", "GIT_COMMITTER_EMAIL": "t@t.com"}
+            subprocess_module.run(["git", "init", str(repo)], check=True, capture_output=True)
+            subprocess_module.run(["git", "commit", "--allow-empty", "-m", "init"],
+                                   cwd=str(repo), check=True, capture_output=True, env=env)
+
+            def mock_run_with_conflicts(cmd, **kwargs):
+                result = MagicMock(returncode=0, stdout="", stderr="")
+                if "diff" in cmd and "--diff-filter=U" in cmd:
+                    result.stdout = "uv.lock\n"
+                elif "pull" in cmd:
+                    result.stdout = "Already up to date.\n"
+                return result
+
+            with patch("memory_bank.commands.update._detect_install_dir", return_value=repo), \
+                    patch("memory_bank.commands.update.subprocess.run", mock_run_with_conflicts):
+                result = CliRunner().invoke(cli, ["update"])
+            assert result.exit_code != 0
+            assert "uv.lock" in result.output
+            assert "checkout" in result.output
 
     def test_force_flag_passes_reinstall_to_uv_sync(self):
         from click.testing import CliRunner
@@ -99,7 +132,7 @@ class TestUpdateCommand:
             subprocess_module.run(["git", "init", str(repo)], check=True, capture_output=True)
             subprocess_module.run(["git", "commit", "--allow-empty", "-m", "init"],
                                    cwd=str(repo), check=True, capture_output=True, env=env)
-            mock_run = MagicMock(return_value=MagicMock(returncode=0, stdout="Already up to date.\n", stderr=""))
+            mock_run = self._no_conflict_mock()
             with patch("memory_bank.commands.update._detect_install_dir", return_value=repo), \
                     patch("memory_bank.commands.update.subprocess.run", mock_run), \
                     patch("memory_bank.commands.update._available_skills", return_value=[]):
