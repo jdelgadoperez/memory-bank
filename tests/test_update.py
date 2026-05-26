@@ -72,6 +72,35 @@ class TestUpdateCommand:
             return MagicMock(returncode=0, stdout=stdout, stderr="")
         return MagicMock(side_effect=side_effect)
 
+    def test_resets_dirty_files_before_pull(self):
+        from click.testing import CliRunner
+
+        from memory_bank.cli import cli
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo = Path(tmpdir)
+            env = {**os.environ, "GIT_AUTHOR_NAME": "test", "GIT_AUTHOR_EMAIL": "t@t.com",
+                   "GIT_COMMITTER_NAME": "test", "GIT_COMMITTER_EMAIL": "t@t.com"}
+            subprocess_module.run(["git", "init", str(repo)], check=True, capture_output=True)
+            subprocess_module.run(["git", "commit", "--allow-empty", "-m", "init"],
+                                   cwd=str(repo), check=True, capture_output=True, env=env)
+
+            def side_effect(cmd, **kwargs):
+                result = MagicMock(returncode=0, stdout="", stderr="")
+                if "diff" in cmd and "--diff-filter=U" not in cmd:
+                    result.stdout = "uv.lock\n"  # dirty before pull
+                elif "pull" in cmd:
+                    result.stdout = "Already up to date.\n"
+                return result
+
+            mock_run = MagicMock(side_effect=side_effect)
+            with patch("memory_bank.commands.update._detect_install_dir", return_value=repo), \
+                    patch("memory_bank.commands.update.subprocess.run", mock_run), \
+                    patch("memory_bank.commands.update._available_skills", return_value=[]):
+                result = CliRunner().invoke(cli, ["update"])
+            assert result.exit_code == 0
+            calls = [str(c) for c in mock_run.call_args_list]
+            assert any("checkout" in c and "'.'" in c for c in calls)
+
     def test_runs_git_pull_and_uv_sync(self):
         from click.testing import CliRunner
 
@@ -108,8 +137,8 @@ class TestUpdateCommand:
 
             def mock_run_with_conflicts(cmd, **kwargs):
                 result = MagicMock(returncode=0, stdout="", stderr="")
-                if "diff" in cmd and "--diff-filter=U" in cmd:
-                    result.stdout = "uv.lock\n"
+                if "--diff-filter=U" in cmd:
+                    result.stdout = "uv.lock\n"  # conflict markers post-pull
                 elif "pull" in cmd:
                     result.stdout = "Already up to date.\n"
                 return result
