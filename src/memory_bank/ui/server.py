@@ -465,11 +465,12 @@ def ui(ctx, port, no_browser, db):
 
     if ctx.invoked_subcommand is not None:
         return
+    import errno
     import json
     import threading
     import time
     import webbrowser
-    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     from urllib.parse import parse_qs, urlparse
 
     from memory_bank.db import DatabaseLockedError, MemoryDB, get_db_path
@@ -489,6 +490,36 @@ def ui(ctx, port, no_browser, db):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+
+        @staticmethod
+        def _q_int(qs, key, default):
+            """Parse an int query param, falling back to *default* on garbage.
+
+            Avoids an unhandled ValueError → 500 on inputs like ``?limit=abc``.
+            """
+            try:
+                return int(qs.get(key, [str(default)])[0])
+            except (TypeError, ValueError):
+                return default
+
+        def _is_cross_site(self) -> bool:
+            """True if this request carries a cross-site Origin.
+
+            The server binds loopback only, but a page the user visits in the
+            same browser can still issue a cross-origin POST. Browsers attach an
+            ``Origin`` header to such requests; reject when that origin's host is
+            neither loopback nor the request's own Host. Blocks the CSRF /
+            memory-poisoning path into the write endpoint without breaking
+            same-origin use (including a loopback alias like memory.local).
+            """
+            origin = self.headers.get("Origin")
+            if not origin:
+                return False
+            origin_host = (urlparse(origin).hostname or "").lower()
+            request_host = self.headers.get("Host", "").rsplit(":", 1)[0].strip("[]").lower()
+            if origin_host in {"127.0.0.1", "localhost", "::1"}:
+                return False
+            return origin_host != request_host
 
         def do_GET(self):
             try:
@@ -516,7 +547,7 @@ def ui(ctx, port, no_browser, db):
 
             elif path == "/api/sessions":
                 qs = parse_qs(parsed.query)
-                limit = int(qs.get("limit", ["10"])[0])
+                limit = self._q_int(qs, "limit", 10)
                 source = qs.get("source", [""])[0] or None
                 project = qs.get("project", [""])[0] or None
                 date_from = qs.get("date_from", [""])[0] or None
@@ -554,7 +585,7 @@ def ui(ctx, port, no_browser, db):
                 if not q:
                     self.send_json({"error": "missing query"}, 400)
                     return
-                limit = int(qs.get("limit", ["10"])[0])
+                limit = self._q_int(qs, "limit", 10)
                 source = qs.get("source", [""])[0] or None
                 role = qs.get("role", [""])[0] or None
                 project = qs.get("project", [""])[0] or None
@@ -584,6 +615,9 @@ def ui(ctx, port, no_browser, db):
             path = parsed.path
 
             if path == "/api/ingest":
+                if self._is_cross_site():
+                    self.send_json({"error": "forbidden: cross-site request"}, 403)
+                    return
                 content_length = int(self.headers.get("Content-Length", 0))
                 if content_length == 0:
                     self.send_json({"error": "empty request body"}, 400)
@@ -619,9 +653,9 @@ def ui(ctx, port, no_browser, db):
                 self.end_headers()
 
     try:
-        server = HTTPServer(("127.0.0.1", port), Handler)
+        server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     except OSError as exc:
-        if exc.errno == 48:  # Address already in use
+        if exc.errno == errno.EADDRINUSE:
             console.print(
                 f"[bold red]Error:[/bold red] Port {port} is already in use.\n"
                 f"[dim]Try [cyan]memory-bank ui stop[/cyan] to stop a background server, "
