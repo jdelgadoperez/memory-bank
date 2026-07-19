@@ -213,6 +213,70 @@ class TestRecallOutput:
         assert "project: other-app" in result.output
 
 
+class TestRecallStdinPrompt:
+    """Claude Code delivers the UserPromptSubmit payload as JSON on stdin,
+    not via CLAUDE_USER_PROMPT. Recall must read stdin or it no-ops in prod."""
+
+    @patch("memory_bank.commands.hooks.MemoryDB")
+    @patch("memory_bank.commands.hooks.subprocess.run")
+    def test_reads_prompt_from_stdin_json(self, mock_subprocess, mock_db_cls):
+        import json
+
+        mock_db = MagicMock()
+        mock_db_cls.return_value = mock_db
+        mock_db.search.return_value = [
+            {"score": 0.85, "timestamp": "2026-03-28T10:00:00+00:00",
+             "role": "assistant", "project": "x", "session_id": "s1",
+             "content": "The retry backoff was the fix."},
+        ]
+        mock_subprocess.return_value = MagicMock(stdout="/tmp/proj\n", returncode=0)
+
+        result = runner().invoke(
+            cli, ["hooks", "recall"],
+            input=json.dumps({"prompt": "How does the retry backoff logic work?"}),
+            env={},
+        )
+        assert result.exit_code == 0
+        assert "<!-- memory-bank:recall -->" in result.output
+        assert "retry backoff was the fix" in result.output
+
+    @patch("memory_bank.commands.hooks.MemoryDB")
+    @patch("memory_bank.commands.hooks.subprocess.run")
+    def test_env_var_takes_precedence_over_stdin(self, mock_subprocess, mock_db_cls):
+        import json
+
+        mock_db = MagicMock()
+        mock_db_cls.return_value = mock_db
+        mock_db.search.return_value = []
+        mock_subprocess.return_value = MagicMock(stdout="/tmp/proj\n", returncode=0)
+
+        runner().invoke(
+            cli, ["hooks", "recall"],
+            input=json.dumps({"prompt": "STDIN PROMPT that is long enough"}),
+            env={"CLAUDE_USER_PROMPT": "ENV PROMPT that is also long enough"},
+        )
+        call_args = mock_db.search.call_args
+        query_arg = call_args.kwargs.get("query")
+        assert query_arg.startswith("ENV PROMPT")
+
+    @patch("memory_bank.commands.hooks.MemoryDB")
+    @patch("memory_bank.commands.hooks.subprocess.run")
+    def test_reads_raw_stdin_when_not_json(self, mock_subprocess, mock_db_cls):
+        mock_db = MagicMock()
+        mock_db_cls.return_value = mock_db
+        mock_db.search.return_value = []
+        mock_subprocess.return_value = MagicMock(stdout="/tmp/proj\n", returncode=0)
+
+        runner().invoke(
+            cli, ["hooks", "recall"],
+            input="a plain non-json prompt line",
+            env={},
+        )
+        call_args = mock_db.search.call_args
+        assert call_args is not None
+        assert "plain non-json prompt" in call_args.kwargs.get("query")
+
+
 class TestRecallQueryPreprocessing:
     @patch("memory_bank.commands.hooks.MemoryDB")
     @patch("memory_bank.commands.hooks.subprocess.run")
