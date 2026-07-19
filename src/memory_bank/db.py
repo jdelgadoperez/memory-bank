@@ -247,6 +247,7 @@ class MemoryDB:
         self._url: str | None = _resolve_qdrant_url(self.path)
         self._embedder = None   # loaded on first call to _embed()
         self._embedder_loaded = False
+        self._embed_source = ""  # provenance of the most recent _embed() call
         self._collections_verified = False
 
     @property
@@ -344,11 +345,15 @@ class MemoryDB:
         texts = [m.content for m in new_msgs]
         vectors = self._embed(texts)
 
+        # Record which embedder produced each vector. Hash-fallback vectors are
+        # not comparable to neural vectors in the same cosine space, so tagging
+        # provenance makes a mixed collection diagnosable (and lets a future
+        # re-embed pass find and upgrade the offline-ingested points).
         points = [
             PointStruct(
                 id=_id_to_uint(m.id),
                 vector=vec,
-                payload=m.to_payload(),
+                payload={**m.to_payload(), "embed_model": self._embed_source},
             )
             for m, vec in zip(new_msgs, vectors)
         ]
@@ -787,12 +792,17 @@ class MemoryDB:
                 import sys
                 print(
                     "[warning] fastembed model unavailable (no internet?). "
-                    "Using hash-based fallback embeddings — semantic search quality will be reduced. "
-                    "Re-ingest once online to get full quality.",
+                    "Using hash-based fallback embeddings — semantic search quality will be reduced, "
+                    "and these vectors are not comparable to neural ones in the same collection. "
+                    "Because ingest de-duplicates by content, simply re-running ingest once online "
+                    "will NOT upgrade these points — delete the offline-ingested data and re-ingest "
+                    "(e.g. 'memory-bank delete <source>' then ingest) to get full quality.",
                     file=sys.stderr,
                 )
         if self._embedder is not None:
+            self._embed_source = f"neural:{EMBEDDING_MODEL}"
             return [vec.tolist() for vec in self._embedder.embed(texts)]
+        self._embed_source = "hash"
         return [_hash_embed(t) for t in texts]
 
     def _existing_ids(self, client: QdrantClient, ids: set[str]) -> set[str]:

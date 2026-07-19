@@ -146,6 +146,10 @@ def distill(since: str, dry_run: bool, db_path: str | None) -> None:
     for session_meta in pending:
         session_id = session_meta["session_id"]
         project = session_meta.get("project", "")
+        # Carry the session's real source so summaries of claude-desktop /
+        # chatgpt sessions aren't mislabeled as claude-code (which would
+        # corrupt --source filtering and stats breakdowns).
+        source = session_meta.get("source") or "claude-code"
         last_ts = session_meta.get("last_ts", datetime.now(UTC).isoformat())
         title = session_meta.get("title", "")[:60]
 
@@ -175,7 +179,7 @@ def distill(since: str, dry_run: bool, db_path: str | None) -> None:
             continue
 
         msg_id = ChatMessage.make_id(
-            source="claude-code",
+            source=source,
             session_id=session_id,
             role=SUMMARY_ROLE,
             content=summary_text,
@@ -183,7 +187,7 @@ def distill(since: str, dry_run: bool, db_path: str | None) -> None:
         )
         summary_msg = ChatMessage(
             id=msg_id,
-            source="claude-code",
+            source=source,
             session_id=session_id,
             project=project,
             role=SUMMARY_ROLE,
