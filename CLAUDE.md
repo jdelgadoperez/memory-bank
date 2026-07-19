@@ -105,9 +105,10 @@ The **Recall hook** (UserPromptSubmit) searches your history before each prompt 
 | `start` | SessionStart hook only |
 | `recall` | UserPromptSubmit (recall) hook only |
 | `precompact` | PreCompact hook only |
+| `distill` | Stop hook that generates AI summaries (requires `ANTHROPIC_API_KEY`) |
 | `both` | Stop + SessionStart |
-| `recommended` | Stop + UserPromptSubmit |
-| `all` | Stop + SessionStart + PreCompact + UserPromptSubmit |
+| `recommended` | Stop + UserPromptSubmit (recall) + distill (**default**) |
+| `all` | Stop + SessionStart + PreCompact + UserPromptSubmit + distill |
 
 ## MCP server
 
@@ -164,11 +165,11 @@ memory-bank ui status
 memory-bank ui dev                 # auto-reload on source changes
 memory-bank mcp
 
-memory-bank setup install [--skip-hooks] [--on stop|start|precompact|recall|both|recommended|all]
+memory-bank setup install [--skip-hooks] [--on stop|start|precompact|recall|distill|both|recommended|all]
 memory-bank setup uninstall
 memory-bank setup status
 
-memory-bank hooks install [--on stop|start|precompact|recall|both|recommended|all]
+memory-bank hooks install [--on stop|start|precompact|recall|distill|both|recommended|all]
 memory-bank hooks uninstall
 memory-bank hooks status
 

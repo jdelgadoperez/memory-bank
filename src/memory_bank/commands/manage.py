@@ -16,7 +16,13 @@ from memory_bank.cli import CONTEXT_SETTINGS, console, cli
     metavar="DIR",
     help="Override the Qdrant DB storage path. Env: [dim]MEMORY_BANK_DB[/dim].",
 )
-def stats(db):
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Emit stats as JSON for scripting instead of the rich table.",
+)
+def stats(db, as_json):
     """Show a summary of what's in your memory bank.
 
     Displays total message count, breakdown by source, and DB configuration.
@@ -31,6 +37,13 @@ def stats(db):
         s = db_obj.stats()
     except DatabaseLockedError as exc:
         raise click.ClickException(str(exc)) from exc
+
+    if as_json:
+        import json as _json
+
+        s["mode"] = "server" if db_obj._url else "embedded"
+        click.echo(_json.dumps(s, indent=2))
+        return
 
     mode_label = (
         f"[green]server[/green] [dim]({db_obj._url})[/dim]"
@@ -69,7 +82,6 @@ def stats(db):
 @click.argument("source", required=False, default=None)
 @click.option(
     "--before",
-    "--since",
     "before",
     default=None,
     metavar="EXPR",

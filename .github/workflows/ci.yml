@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v8.1.0
+      - run: uv sync --extra dev
+
+      # Blocking: the unit suite must pass on every PR. This is the gate that
+      # was previously missing — nothing ran pytest in CI before.
+      - name: Tests
+        run: uv run pytest -q
+
+      # Informational for now: the existing tree has pre-existing lint/format
+      # debt. These surface issues without blocking; flip to blocking once the
+      # tree is clean (tracked as a follow-up).
+      - name: Lint (non-blocking)
+        continue-on-error: true
+        run: uv run ruff check .
+      - name: Format check (non-blocking)
+        continue-on-error: true
+        run: uv run ruff format --check .

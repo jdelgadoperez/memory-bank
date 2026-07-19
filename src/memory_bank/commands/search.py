@@ -103,6 +103,7 @@ from memory_bank.cli import CONTEXT_SETTINGS, ROLE_STYLES, console, cli
     "--min-score",
     default=0.0,
     show_default=False,
+    type=click.FloatRange(0.0, 1.0),
     metavar="FLOAT",
     help="Discard results below this similarity score (0–1). Default: 0 (no filter). "
          "Recommended: 0.5 in agent contexts to avoid low-quality hits.",
@@ -110,7 +111,7 @@ from memory_bank.cli import CONTEXT_SETTINGS, ROLE_STYLES, console, cli
 @click.option(
     "--snippet",
     default=None,
-    type=int,
+    type=click.IntRange(min=1),
     metavar="N",
     help="Truncate content to N characters in JSON / agent output. "
          "Default: 300 in --agent mode, no truncation otherwise.",
