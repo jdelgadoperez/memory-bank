@@ -29,9 +29,15 @@ START_CONTEXT_COMMAND = (
     " >> ~/.memory-bank/ingest.log 2>&1 &"
 )
 
+# The command is wrapped in a subshell so the redirect + backgrounding apply
+# and the trailing "# precompact" comment stays a genuine shell comment (used
+# only as an install/uninstall identity marker). The subshell also keeps this
+# command from containing STOP_HOOK_MARKER ("...claude-code >>"), so the Stop
+# and PreCompact hooks remain independently installable.
 PRECOMPACT_HOOK_COMMAND = (
-    "memory-bank ingest claude-code  # precompact"
+    "( memory-bank ingest claude-code )"
     " >> ~/.memory-bank/ingest.log 2>&1 &"
+    "  # precompact"
 )
 
 DISTILL_HOOK_COMMAND = (
@@ -98,11 +104,22 @@ def hook_entry(command: str) -> dict[str, Any]:
 
 
 def is_installed(settings: dict[str, Any], hook_type: str, marker: str) -> bool:
+    return _find_hook_command(settings, hook_type, marker) is not None
+
+
+def _find_hook_command(
+    settings: dict[str, Any], hook_type: str, marker: str
+) -> dict[str, Any] | None:
+    """Return the inner command dict for an installed hook, or None.
+
+    Matching is by marker substring so an already-installed hook can be both
+    detected and upgraded in place when its command string has changed.
+    """
     for entry in settings.get("hooks", {}).get(hook_type, []):
         for h in entry.get("hooks", []):
             if marker in h.get("command", ""):
-                return True
-    return False
+                return h
+    return None
 
 
 def is_mcp_installed(settings: dict[str, Any]) -> bool:
@@ -134,7 +151,7 @@ def remove_hooks(path: Path | None = None) -> list[str]:
     if not p.exists():
         return []
 
-    settings = json.loads(p.read_text())
+    settings = load_settings(p)
     removed: list[str] = []
 
     all_markers = (STOP_HOOK_MARKER, START_HOOK_MARKER, PRECOMPACT_HOOK_MARKER, RECALL_HOOK_MARKER, DISTILL_HOOK_MARKER)
@@ -192,8 +209,8 @@ def hooks():
         "recall      = before each prompt — injects relevant past context\n"
         "distill     = after each session ends — generates AI summaries (requires ANTHROPIC_API_KEY)\n"
         "both        = stop + start\n"
-        "recommended = stop + recall + distill\n"
-        "all         = stop + start + precompact + recall + distill (default)"
+        "recommended = stop + recall + distill (default)\n"
+        "all         = stop + start + precompact + recall + distill"
     ),
 )
 @click.option(
@@ -248,8 +265,15 @@ def install(trigger, settings_path):
 
     installed_any = False
     for event, command, marker in plan:
-        if is_installed(settings, event, marker):
-            console.print(f"[yellow]Already installed:[/yellow] {event} hook — skipping.")
+        existing = _find_hook_command(settings, event, marker)
+        if existing is not None:
+            if existing.get("command") == command:
+                console.print(f"[yellow]Already installed:[/yellow] {event} hook — skipping.")
+                continue
+            # Marker matches but the command string is stale — upgrade in place.
+            existing["command"] = command
+            console.print(f"[bold green]Updated:[/bold green] {event} hook → [dim]{command}[/dim]")
+            installed_any = True
             continue
         hooks_cfg.setdefault(event, []).append(hook_entry(command))
         console.print(f"[bold green]Installed:[/bold green] {event} hook → [dim]{command}[/dim]")
@@ -395,6 +419,40 @@ def context_summary(db, limit):
             console.print(f"[yellow]Warning:[/yellow] could not update CLAUDE.local.md: {exc}")
 
 
+def _read_hook_prompt() -> str:
+    """Resolve the user prompt for the recall hook.
+
+    Order of precedence:
+      1. ``CLAUDE_USER_PROMPT`` env var (legacy / manual invocation).
+      2. JSON on stdin — Claude Code's actual ``UserPromptSubmit`` contract
+         delivers ``{"prompt": ...}`` on stdin, not via an env var.
+      3. Raw stdin text (if it isn't JSON).
+
+    Reading stdin is skipped when it is an interactive TTY so a manual
+    ``memory-bank hooks recall`` doesn't block waiting for input.
+    """
+    env_prompt = os.environ.get("CLAUDE_USER_PROMPT", "")
+    if env_prompt.strip():
+        return env_prompt
+
+    try:
+        if sys.stdin is None or sys.stdin.isatty():
+            return env_prompt
+        raw = sys.stdin.read()
+    except Exception:
+        return env_prompt
+
+    if not raw.strip():
+        return env_prompt
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return raw  # not JSON — treat the whole payload as the prompt
+    if isinstance(data, dict):
+        return str(data.get("prompt", "") or "")
+    return env_prompt
+
+
 @hooks.command("recall", context_settings=CONTEXT_SETTINGS, hidden=True)
 @click.option(
     "--db",
@@ -418,8 +476,11 @@ def recall(db):
     if os.environ.get("MEMORY_BANK_RECALL") == "0":
         return
 
-    # Read prompt from env
-    prompt = os.environ.get("CLAUDE_USER_PROMPT", "")
+    # Read the prompt. Claude Code delivers the UserPromptSubmit payload as
+    # JSON on stdin ({"prompt": ...}); older builds / manual runs may set the
+    # CLAUDE_USER_PROMPT env var. Prefer the env var when present (keeps manual
+    # invocation predictable), otherwise fall back to stdin.
+    prompt = _read_hook_prompt()
     if not prompt.strip():
         return
 
