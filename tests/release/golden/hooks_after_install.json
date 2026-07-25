@@ -7,7 +7,7 @@
   },
   "PreCompact": {
     "min_entries": 1,
-    "must_contain": ["memory-bank ingest claude-code  # precompact"]
+    "must_contain": ["memory-bank ingest claude-code", "# precompact"]
   },
   "UserPromptSubmit": {
     "min_entries": 1,

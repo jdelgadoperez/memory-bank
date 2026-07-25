@@ -14,7 +14,7 @@ SAMPLE_SETTINGS = {
             {"hooks": [{"command": "memory-bank distill --since 3h >> log &"}]},
         ],
         "PreCompact": [
-            {"hooks": [{"command": "memory-bank ingest claude-code  # precompact >> log &"}]},
+            {"hooks": [{"command": "( memory-bank ingest claude-code ) >> log &  # precompact"}]},
         ],
         "UserPromptSubmit": [
             {"hooks": [{"command": "memory-bank hooks recall 2>> log"}]},

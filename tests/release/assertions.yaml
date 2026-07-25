@@ -4,7 +4,12 @@ hooks:
       - "memory-bank ingest claude-code >>"
       - "memory-bank distill"
     PreCompact:
-      - "memory-bank ingest claude-code  # precompact"
+      # The PreCompact command wraps the ingest in a subshell — e.g.
+      # "( memory-bank ingest claude-code ) >> ... &  # precompact" — so the
+      # ingest invocation and the "# precompact" identity comment are not a
+      # single contiguous substring. Assert both fragments independently.
+      - "memory-bank ingest claude-code"
+      - "# precompact"
     UserPromptSubmit:
       - "memory-bank hooks recall"
     SessionStart:
