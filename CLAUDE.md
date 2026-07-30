@@ -157,6 +157,9 @@ memory-bank session SESSION_ID [--json]
 
 memory-bank stats
 memory-bank delete [SOURCE] [--since EXPR] [--yes]
+
+memory-bank distill [--since EXPR] [--before EXPR] [--limit N]
+                    [--min-messages N] [--replace-raw] [--hard] [--dry-run]
 memory-bank ui [-p PORT] [-B|--no-browser] [--db PATH]
 memory-bank ui start               # background daemon
 memory-bank ui stop
@@ -175,6 +178,40 @@ memory-bank hooks status
 
 memory-bank update [--dir DIR]
 ```
+
+## Compacting old history (`distill --replace-raw`)
+
+Ingest slows as the collection grows. `distill --replace-raw` collapses an old
+session down to a single searchable summary record, then deletes its raw messages —
+trading full-fidelity transcripts for a large reduction in point count.
+
+```bash
+# 1. Always preview first — shows how many sessions match and what will be removed
+memory-bank distill --before 90d --replace-raw --min-messages 10 --dry-run
+
+# 2. Batch through the backlog (one API call per session, so chunk large runs)
+memory-bank distill --before 90d --replace-raw --min-messages 10 --limit 200
+
+# 3. Only once you're satisfied nothing important vanished, reclaim the space
+memory-bank distill --before 90d --replace-raw --min-messages 10 --hard
+```
+
+| Flag | Why it matters |
+|---|---|
+| `--before` | Upper age bound. Relaxes the `--since 3h` default so old sessions are reachable at all. |
+| `--replace-raw` | Deletes raw messages **after** the summary is written. A failed summarization leaves that session untouched. |
+| `--hard` | Required to actually shrink the collection — soft-deleted points stay resident until purged (90d). Irreversible. |
+| `--limit N` | Cost per run scales with *session count*, not message count. Batch large backlogs. |
+| `--min-messages N` | Skips tiny sessions where an API call reclaims almost nothing. |
+
+Notes:
+- Ordering is guaranteed: the summary is durably upserted before any delete runs, so
+  an interrupted run never loses data.
+- The summary record itself is excluded from deletion via `exclude_role`.
+- Without `--hard`, soft-deleted points are re-scanned by the auto-purge pass on every
+  ingest until they expire — so the collection will not shrink yet.
+- This is lossy. Old sessions become bullet summaries; they cannot be replayed verbatim.
+  `metadata.distilled_from` preserves which session a summary came from.
 
 ### Time expressions (`--since` / `--before`)
 

@@ -73,9 +73,43 @@ def _summarize(transcript: str, api_key: str, *, project: str = "") -> str:
 @cli.command(context_settings=CONTEXT_SETTINGS)
 @click.option(
     "--since",
-    default="3h",
-    show_default=True,
-    help="Only distill sessions with activity in this window. Accepts: 1h, 7d, 2w, etc.",
+    default=None,
+    help="Only distill sessions with activity in this window. Accepts: 1h, 7d, 2w, etc.  [default: 3h]",
+)
+@click.option(
+    "--before",
+    default=None,
+    help="Only distill sessions last active BEFORE this cutoff (e.g. 90d). "
+    "Relaxes the --since default so old sessions are reachable.",
+)
+@click.option(
+    "--replace-raw",
+    is_flag=True,
+    default=False,
+    help="After a summary is written, delete that session's raw messages. "
+    "Soft-delete unless --hard is also given.",
+)
+@click.option(
+    "--hard",
+    is_flag=True,
+    default=False,
+    help="With --replace-raw, permanently remove raw messages instead of soft-deleting. "
+    "Irreversible.",
+)
+@click.option(
+    "--limit",
+    type=int,
+    default=None,
+    metavar="N",
+    help="Process at most N sessions (oldest first), for batching large backlogs.",
+)
+@click.option(
+    "--min-messages",
+    type=int,
+    default=None,
+    metavar="N",
+    help="Skip sessions with fewer than N messages — summarizing a tiny session "
+    "costs an API call to reclaim almost nothing.",
 )
 @click.option(
     "--dry-run",
@@ -91,12 +125,25 @@ def _summarize(transcript: str, api_key: str, *, project: str = "") -> str:
     envvar="MEMORY_BANK_DB",
     metavar="DIR",
 )
-def distill(since: str, dry_run: bool, db_path: str | None) -> None:
-    """Generate distilled summaries for recent sessions and store them in the DB.
+def distill(
+    since: str | None,
+    before: str | None,
+    replace_raw: bool,
+    hard: bool,
+    limit: int | None,
+    min_messages: int | None,
+    dry_run: bool,
+    db_path: str | None,
+) -> None:
+    """Generate distilled summaries for sessions and store them in the DB.
 
     Reads assistant responses from each session, calls the Anthropic API to
     produce a concise bullet-point summary, and stores it as a searchable
     record. The recall hook then prefers these over raw session snippets.
+
+    \b
+    With --replace-raw the session's raw messages are deleted once its summary
+    has been written, collapsing an old session to a single searchable record.
 
     \b
     Requires ANTHROPIC_API_KEY to be set in your environment.
@@ -106,19 +153,33 @@ def distill(since: str, dry_run: bool, db_path: str | None) -> None:
       memory-bank distill                  # summarize sessions from last 3 hours
       memory-bank distill --since 7d       # re-summarize last week
       memory-bank distill --dry-run        # preview without writing
+      memory-bank distill --before 90d --replace-raw --limit 200 --dry-run
     """
+    if hard and not replace_raw:
+        raise click.ClickException("--hard only applies together with --replace-raw.")
+
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key and not dry_run:
         raise click.ClickException(
             "ANTHROPIC_API_KEY is not set. Export it before running distill."
         )
 
-    since_iso = parse_time_expr(since)
+    # --since defaults to 3h, but that would exclude everything --before targets.
+    # Only apply the default when the user gave neither bound.
+    if since is None:
+        since = None if before else "3h"
+
+    since_iso = parse_time_expr(since) if since else None
+    before_iso = parse_time_expr(before) if before else None
     db = MemoryDB(Path(db_path) if db_path else None)
 
-    sessions = db.list_sessions(since=since_iso)
+    window = " and ".join(
+        p for p in (f"since {since}" if since else "", f"before {before}" if before else "") if p
+    ) or "all time"
+
+    sessions = db.list_sessions(since=since_iso, before=before_iso)
     if not sessions:
-        console.print(f"[dim]No sessions found since {since}.[/dim]")
+        console.print(f"[dim]No sessions found {window}.[/dim]")
         return
 
     # Find sessions already summarized in this window via a role-filtered scroll.
@@ -132,16 +193,47 @@ def distill(since: str, dry_run: bool, db_path: str | None) -> None:
     ]
 
     if not pending:
-        console.print(f"[dim]All sessions since {since} are already distilled.[/dim]")
+        console.print(f"[dim]All sessions {window} are already distilled.[/dim]")
         return
 
+    if min_messages is not None:
+        too_small = [s for s in pending if s.get("message_count", 0) < min_messages]
+        pending = [s for s in pending if s.get("message_count", 0) >= min_messages]
+        if too_small:
+            console.print(
+                f"[dim]Skipping {len(too_small)} session(s) under {min_messages} messages "
+                f"({sum(s.get('message_count', 0) for s in too_small)} msgs).[/dim]"
+            )
+        if not pending:
+            console.print(f"[dim]No sessions {window} meet the size threshold.[/dim]")
+            return
+
+    # Oldest first, so batched runs chew through the backlog from the far end.
+    pending.sort(key=lambda s: s.get("last_ts", ""))
+    total_matched = len(pending)
+    if limit is not None:
+        pending = pending[:limit]
+
     console.print(
-        f"[bold]Distilling[/bold] {len(pending)} session(s) since [cyan]{since}[/cyan]"
+        f"[bold]Distilling[/bold] {len(pending)} session(s) {window}"
+        + (f" [dim](of {total_matched} matched)[/dim]" if len(pending) < total_matched else "")
         + (" [dim](dry run)[/dim]" if dry_run else "") + "…"
     )
+    if replace_raw:
+        mode = "[red]hard delete[/red]" if hard else "soft delete"
+        console.print(
+            f"  [yellow]--replace-raw[/yellow]: raw messages will be removed via {mode} "
+            "after each summary is written."
+        )
+        if not hard:
+            console.print(
+                "  [dim]Soft-deleted points stay resident until purged (90d), so the "
+                "collection will not shrink yet.[/dim]"
+            )
 
     inserted = 0
     skipped = 0
+    replaced = 0
 
     for session_meta in pending:
         session_id = session_meta["session_id"]
@@ -196,10 +288,44 @@ def distill(since: str, dry_run: bool, db_path: str | None) -> None:
             metadata={"distilled_from": session_id},
         )
         db.upsert([summary_msg])
-        console.print(f"  [green]✓[/green] {label}")
         inserted += 1
+
+        # Only ever runs after the summary above is durably written — a session
+        # whose summarization failed took an earlier `continue` and keeps its raw
+        # messages. The summary role is excluded so it survives its own cleanup.
+        removed = 0
+        if replace_raw:
+            try:
+                removed = db.delete_session(
+                    session_id, exclude_role=SUMMARY_ROLE, hard=hard
+                )
+                replaced += removed
+            except Exception as exc:
+                console.print(
+                    f"  [yellow]warn[/yellow] {label} — summary kept, raw delete failed: {exc}"
+                )
+
+        suffix = f" [dim]−{removed} raw[/dim]" if removed else ""
+        console.print(f"  [green]✓[/green] {label}{suffix}")
 
     if not dry_run:
         console.print(
             f"\n[bold green]Done:[/bold green] {inserted} summarized, {skipped} skipped."
         )
+        if replace_raw:
+            # Net delta: each session trades N raw messages for 1 summary record.
+            net = inserted - replaced
+            console.print(
+                f"[bold]Raw messages removed:[/bold] {replaced} "
+                f"[dim](net point change: {net:+,})[/dim]"
+            )
+            if not hard and replaced:
+                console.print(
+                    "[dim]Soft-deleted — collection size is unchanged until these are "
+                    "purged. Re-run with --hard to reclaim immediately.[/dim]"
+                )
+        if limit is not None and total_matched > len(pending):
+            console.print(
+                f"[dim]{total_matched - len(pending)} session(s) still pending — "
+                "re-run to continue.[/dim]"
+            )
