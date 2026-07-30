@@ -744,6 +744,91 @@ class MemoryDB:
             )
         return len(to_update)
 
+    def delete_session(
+        self,
+        session_id: str,
+        *,
+        exclude_role: str | None = None,
+        hard: bool = False,
+    ) -> int:
+        """
+        Delete every message belonging to *session_id*.
+
+        `exclude_role` keeps records of that role — used by distill --replace-raw so
+        the summary written for a session survives the deletion of its raw messages.
+        Soft delete by default; hard=True removes permanently.
+        """
+        must: list[FieldCondition] = [
+            FieldCondition(key="session_id", match=MatchValue(value=session_id))
+        ]
+        must_not: list[FieldCondition] = []
+        if exclude_role:
+            must_not.append(FieldCondition(key="role", match=MatchValue(value=exclude_role)))
+
+        if hard:
+            flt = Filter(must=must, must_not=must_not or None)
+            to_delete: list[int] = []
+            with self._connect() as client:
+                offset = None
+                while True:
+                    batch, offset = client.scroll(
+                        collection_name=COLLECTION,
+                        scroll_filter=flt,
+                        limit=1000,
+                        offset=offset,
+                        with_payload=False,
+                        with_vectors=False,
+                    )
+                    to_delete.extend(r.id for r in batch)
+                    if offset is None:
+                        break
+
+            if not to_delete:
+                return 0
+
+            with self._connect() as client:
+                for i in range(0, len(to_delete), 1000):
+                    client.delete(
+                        collection_name=COLLECTION,
+                        points_selector=to_delete[i : i + 1000],
+                    )
+            return len(to_delete)
+
+        # Soft delete path — skip anything already soft-deleted so repeat runs
+        # don't reset deleted_at and restart the 90-day purge clock.
+        deleted_at = datetime.now(timezone.utc).isoformat()
+        flt = Filter(
+            must=must,
+            must_not=must_not
+            + [FieldCondition(key="is_deleted", match=MatchValue(value=True))],
+        )
+        to_update: list[int] = []
+        with self._connect() as client:
+            offset = None
+            while True:
+                batch, offset = client.scroll(
+                    collection_name=COLLECTION,
+                    scroll_filter=flt,
+                    limit=1000,
+                    offset=offset,
+                    with_payload=False,
+                    with_vectors=False,
+                )
+                to_update.extend(r.id for r in batch)
+                if offset is None:
+                    break
+
+        if not to_update:
+            return 0
+
+        with self._connect() as client:
+            client.set_payload(
+                collection_name=COLLECTION,
+                payload={"is_deleted": True, "deleted_at": deleted_at},
+                points=to_update,
+            )
+        return len(to_update)
+
     def purge_expired(self, days: int = 90) -> int:
         """Hard-delete points that were soft-deleted more than `days` days ago."""
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
