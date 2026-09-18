@@ -45,3 +45,7 @@ echo ""
 echo "  memory-bank search \"your query\"   # search chat history"
 echo "  memory-bank ui                    # open browser UI"
 echo "  memory-bank stats                 # see what's indexed"
+
+# Last line on screen, and only after an install that ran all the way through.
+echo ""
+echo "If this helped: https://ko-fi.com/jessdp"
