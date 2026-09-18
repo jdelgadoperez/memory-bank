@@ -465,6 +465,16 @@ scripts/
 └── plugin.json            Claude Code plugin manifest (auto-discovery)
 hooks/
 └── hooks.json             Hook definitions used by the plugin manifest
+.github/
+└── FUNDING.yml            GitHub metadata (funding link, shown as the Sponsor button)
 .mcp.json                  Project-level MCP server config (Claude Code / Claude Desktop)
 install.sh                 One-step installer script
 ```
+
+## Found this useful?
+
+If you'd like to buy me a coffee or send a tip, it's much appreciated.
+
+[![Say thanks on Ko-fi](https://img.shields.io/badge/Ko--fi-Say%20thanks-FF5E5B?logo=kofi&logoColor=white)](https://ko-fi.com/jessdp)
+
+A star works just as well.
