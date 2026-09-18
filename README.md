@@ -473,8 +473,7 @@ install.sh                 One-step installer script
 
 ## Found this useful?
 
-If you feel like buying me a coffee or just kicking back a little something for
-the time that went into it, it's appreciated.
+If you'd like to buy me a coffee or send a tip, it's much appreciated.
 
 [![Say thanks on Ko-fi](https://img.shields.io/badge/Ko--fi-Say%20thanks-FF5E5B?logo=kofi&logoColor=white)](https://ko-fi.com/jessdp)
 
