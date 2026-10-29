@@ -10,6 +10,10 @@ import rich_click as click
 from memory_bank.cli import CONTEXT_SETTINGS, cli, console
 from memory_bank.commands.setup import _SKILLS_TARGET, _available_skills
 
+# onnxruntime lacks wheels for Python 3.14+ on macOS x86_64;
+# pin to the latest fully-supported minor version for tool installs.
+_TOOL_PYTHON = "3.13"
+
 
 def _current_version() -> str:
     try:
@@ -113,35 +117,35 @@ def _update_uv_tool(before_version: str, force: bool = False) -> None:
             console.print(f"  [dim]{pull.stdout.strip()}[/dim]")
 
         console.print("[bold]Reinstalling package[/bold]")
-        cmd = ["uv", "tool", "install", str(local_path), "--reinstall"]
+        cmd = ["uv", "tool", "install", "--python", _TOOL_PYTHON, str(local_path), "--reinstall"]
     elif git_url is not None:
         install_spec = f"git+{git_url}"
         if force:
             console.print(f"[dim]Detected git install ({git_url}) — running uv tool install --reinstall[/dim]\n")
             console.print("[bold]Reinstalling package[/bold]")
-            cmd = ["uv", "tool", "install", install_spec, "--reinstall"]
+            cmd = ["uv", "tool", "install", "--python", _TOOL_PYTHON, install_spec, "--reinstall"]
         else:
             console.print(f"[dim]Detected git install ({git_url}) — running uv tool install --reinstall[/dim]\n")
             console.print("[bold]Upgrading package[/bold]")
-            cmd = ["uv", "tool", "install", install_spec, "--reinstall"]
-        recovery = f"uv tool install {install_spec} --reinstall"
+            cmd = ["uv", "tool", "install", "--python", _TOOL_PYTHON, install_spec, "--reinstall"]
+        recovery = f"uv tool install --python {_TOOL_PYTHON} {install_spec} --reinstall"
     else:
         pkg = "memory-bank"
         if force:
             console.print("[dim]Detected uv tool install — running uv tool install --reinstall[/dim]\n")
             console.print("[bold]Reinstalling package[/bold]")
-            cmd = ["uv", "tool", "install", pkg, "--reinstall"]
+            cmd = ["uv", "tool", "install", "--python", _TOOL_PYTHON, pkg, "--reinstall"]
         else:
             console.print("[dim]Detected uv tool install — running uv tool upgrade[/dim]\n")
             console.print("[bold]Upgrading package[/bold]")
-            cmd = ["uv", "tool", "upgrade", pkg]
-        recovery = f"uv tool install {pkg} --reinstall"
+            cmd = ["uv", "tool", "upgrade", "--python", _TOOL_PYTHON, pkg]
+        recovery = f"uv tool install --python {_TOOL_PYTHON} {pkg} --reinstall"
 
     upgrade = subprocess.run(cmd, capture_output=True, text=True)
     if upgrade.returncode != 0:
         console.print(f"[red]{upgrade.stderr.strip()}[/red]")
         if local_path is not None:
-            recovery = f"uv tool install {local_path} --reinstall"
+            recovery = f"uv tool install --python {_TOOL_PYTHON} {local_path} --reinstall"
         raise click.ClickException(
             f"Upgrade failed — see above for details.\n\n"
             f"  To recover, run: [cyan]{recovery}[/cyan]"
