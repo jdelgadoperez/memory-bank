@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import random
+import re
 import uuid
 from unittest.mock import MagicMock, patch
 
@@ -103,6 +104,14 @@ class TestCopyCollection:
         ensure_collection(src, server=False)
         assert copy_collection(src, dst, dst_is_server=False) == 0
         assert dst.collection_exists(COLLECTION)
+
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _plain(output: str) -> str:
+    """CLI output without ANSI colour codes, panel borders or line wrapping."""
+    return " ".join(_ANSI.sub("", output).replace("│", " ").split())
 
 
 def _make_store(path, n: int, **payload) -> list[str]:
@@ -259,7 +268,7 @@ class TestMigrateCommand:
             result = self._run("--to", "server", "--db", str(emb))
 
         assert result.exit_code == 0, result.output
-        assert "Copied 40 points" in result.output
+        assert "Copied 40 points" in _plain(result.output)
         s = QdrantClient(path=str(fake_server))
         assert s.count(COLLECTION, exact=True).count == 40
         s.close()
@@ -278,7 +287,7 @@ class TestMigrateCommand:
             result = self._run("--to", "server", "--db", str(emb), "--dry-run")
 
         assert result.exit_code == 0, result.output
-        assert "would copy 10 points" in result.output
+        assert "would copy 10 points" in _plain(result.output)
         s = QdrantClient(path=str(fake_server))
         assert not s.collection_exists(COLLECTION)
         s.close()
@@ -293,8 +302,7 @@ class TestMigrateCommand:
         finally:
             holder.close()
         assert result.exit_code != 0
-        flat = " ".join(result.output.replace("│", " ").split())
-        assert "in use by another process" in flat
+        assert "in use by another process" in _plain(result.output)
         open_server.assert_not_called()
 
     def test_unreachable_server_errors_without_docker(self, tmp_path, monkeypatch):
@@ -304,7 +312,7 @@ class TestMigrateCommand:
         ):
             result = self._run("--to", "server", "--db", str(tmp_path / "qdrant"))
         assert result.exit_code != 0
-        assert "No Qdrant server is reachable" in result.output
+        assert "No Qdrant server is reachable" in _plain(result.output)
 
     def test_to_embedded_never_autostarts_docker(self, tmp_path, monkeypatch):
         monkeypatch.delenv("QDRANT_URL", raising=False)
