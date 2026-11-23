@@ -160,6 +160,8 @@ memory-bank delete [SOURCE] [--since EXPR] [--yes]
 
 memory-bank distill [--since EXPR] [--before EXPR] [--limit N]
                     [--min-messages N] [--replace-raw] [--hard] [--dry-run]
+memory-bank migrate --to server|embedded [--db DIR] [--url URL]
+                    [--batch-size N] [--dry-run]
 memory-bank ui [-p PORT] [-B|--no-browser] [--db PATH]
 memory-bank ui start               # background daemon
 memory-bank ui stop
@@ -294,6 +296,7 @@ src/memory_bank/
 │   ├── ingest.py          — ingest subcommands (claude-code, claude-desktop, all, custom)
 │   ├── search.py          — search + sessions + session commands
 │   ├── manage.py          — stats + delete commands
+│   ├── migrate.py         — copy data between embedded and server Qdrant
 │   ├── hooks.py           — hooks install/uninstall/status
 │   ├── setup.py           — setup install/uninstall/status
 │   ├── update.py          — update command (uv tool upgrade or git pull)

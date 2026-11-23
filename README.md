@@ -149,23 +149,28 @@ Embedded mode is fine for small collections. It slows down past about 20k points
 
 ### Switching from embedded to server
 
-1. Stop anything that has the embedded files open: `memory-bank ui stop`.
+1. Stop anything that has the embedded files open: `memory-bank ui stop`, and quit Claude Code / Claude Desktop so the hooks and MCP server release them.
 2. Start Docker.
-3. Run any command, e.g. `memory-bank stats`. It creates the container, and the **Qdrant mode** row should now say `server`.
-4. Restart the long-running processes, which pick their mode once at startup: `memory-bank ui start`, and restart Claude Code / Claude Desktop so the MCP server reconnects.
-5. **Copy your existing data over** (see [Moving data between modes](#moving-data-between-modes)). The server starts out **empty**.
+3. Copy your data into the server. It starts out **empty**:
+   ```bash
+   memory-bank migrate --to server
+   ```
+   This creates the container if needed. Run `memory-bank stats` afterwards: the **Qdrant mode** row should say `server` and the count should match.
+4. Restart the long-running processes, which pick their mode once at startup: `memory-bank ui start`, and reopen Claude Code / Claude Desktop.
 
 You don't need `QDRANT_URL` for this. The container on `localhost:6333` is found automatically. Set it only if Qdrant runs somewhere else (another host or port, or Qdrant Cloud), and make sure that server is already up, because setting `QDRANT_URL` skips the Docker auto-start.
 
 ### Switching from server to embedded
 
-Stopping the container isn't enough. If Docker is running, step 3 above starts it again, and the container is set to restart on its own.
+Copy first, while the server is still running. Stopping the container alone isn't enough to switch: if Docker is running, memory-bank starts it again, and the container is set to restart on its own.
 
-1. Unset `QDRANT_URL`.
-2. Stop the container: `docker stop memory-bank-qdrant`.
-3. Quit Docker.
+1. Stop the UI server and quit Claude Code / Claude Desktop.
+2. Copy your data into the embedded store:
+   ```bash
+   memory-bank migrate --to embedded
+   ```
+3. Unset `QDRANT_URL`, stop the container (`docker stop memory-bank-qdrant`), and quit Docker.
 4. Restart the UI server and Claude Code / Claude Desktop.
-5. Copy your data over if the server has anything the embedded store doesn't.
 
 ### Where `QDRANT_URL` needs to be set
 
@@ -232,64 +237,30 @@ The two modes **don't share a storage format**. Even though the container mounts
 
 Switching modes therefore doesn't bring your history along. Neither side is deleted, though. The other mode's data is still on disk and can be copied across.
 
-There's no built-in migrate command yet. This script copies every point, with its stored vector and payload, so nothing is re-embedded and soft-deleted points stay soft-deleted. Points are keyed by message ID, so it **merges** into whatever the destination already has, and it's safe to run more than once.
-
-Save it as `migrate.py`:
-
-```python
-from pathlib import Path
-from qdrant_client import QdrantClient, models
-
-COLLECTION = "chat_history"
-EMBEDDED = str(Path.home() / ".memory-bank" / "qdrant")   # or your MEMORY_BANK_DB
-SERVER = "http://localhost:6333"                         # or your QDRANT_URL
-
-# Embedded → server. To go the other way, swap these two lines.
-src = QdrantClient(path=EMBEDDED)
-dst = QdrantClient(url=SERVER)
-
-if not dst.collection_exists(COLLECTION):
-    dst.create_collection(
-        COLLECTION,
-        vectors_config=models.VectorParams(size=384, distance=models.Distance.COSINE),
-    )
-
-offset, copied = None, 0
-while True:
-    points, offset = src.scroll(
-        COLLECTION, limit=256, offset=offset, with_payload=True, with_vectors=True
-    )
-    if points:
-        dst.upsert(COLLECTION, points=[
-            models.PointStruct(id=p.id, vector=p.vector, payload=p.payload) for p in points
-        ])
-        copied += len(points)
-    if offset is None:
-        break
-
-print(f"Copied {copied} points; destination now has {dst.count(COLLECTION).count}")
-src.close()
-dst.close()
-```
-
-Before running it:
-
-- The server must be running. For embedded → server, finish steps 1–3 of [Switching from embedded to server](#switching-from-embedded-to-server) first.
-- Nothing else may have the embedded files open. Stop the UI server, and quit Claude Code / Claude Desktop so the hooks and MCP server aren't using them.
-
-Run it with memory-bank's own Python, so the `qdrant-client` version matches the one that wrote the embedded files:
+Use `memory-bank migrate` to copy it. It copies every point with its stored vector and payload, so nothing is re-embedded and soft-deleted points stay soft-deleted. Points are keyed by message ID, so it **merges** into whatever the destination already has. A message already there is overwritten with the source copy, and re-running is safe. Nothing is deleted from the source.
 
 ```bash
-# Installed with uv tool / install.sh
-~/.local/share/uv/tools/memory-bank/bin/python migrate.py
-
-# Cloned repo
-.venv/bin/python migrate.py
+memory-bank migrate --to server --dry-run   # show counts on both sides, write nothing
+memory-bank migrate --to server             # embedded → server
+memory-bank migrate --to embedded           # server → embedded
 ```
 
-Afterwards, run `memory-bank stats` and check that the point count matches.
+| Option | Description |
+| --- | --- |
+| `--to server\|embedded` | Mode to copy **into**. The other one is the source. |
+| `--db DIR` | Embedded store path (default `MEMORY_BANK_DB` or `~/.memory-bank/qdrant`) |
+| `--url URL` | Server URL (default `QDRANT_URL` or `http://localhost:6333`) |
+| `--batch-size N` | Points per request (default 256) |
+| `--dry-run` | Show what would be copied without writing |
 
-**Alternative: re-ingest.** Running `memory-bank ingest all` in the new mode rebuilds whatever is still in your source files. Anything that isn't comes back only through the copy: Claude Code transcripts that have since been cleaned up, one-off ChatGPT/Desktop imports, and `distill` summaries (especially with `--replace-raw`). So prefer the script.
+Notes:
+
+- **Nothing else may have the embedded files open.** If the UI server, a hook or the MCP server holds them, `migrate` stops with a message saying which to close.
+- **With `--to server`**, if nothing answers on `localhost:6333` and Docker is running, the container is started for you. A custom `--url` must already be up.
+- **With `--to embedded`**, the server must already be running. Docker is never started.
+- It finishes by printing both counts, and exits with an error if the destination ends up with fewer points than the source.
+
+**Alternative: re-ingest.** Running `memory-bank ingest all` in the new mode rebuilds whatever is still in your source files. Anything that isn't comes back only through `migrate`: Claude Code transcripts that have since been cleaned up, one-off ChatGPT/Desktop imports, and `distill` summaries (especially with `--replace-raw`).
 
 ---
 

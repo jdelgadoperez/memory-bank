@@ -37,7 +37,7 @@ click.rich_click.COMMAND_GROUPS = {
         },
         {
             "name": "Query & Manage",
-            "commands": ["search", "sessions", "session", "stats", "delete", "ui", "distill"],
+            "commands": ["search", "sessions", "session", "stats", "delete", "ui", "distill", "migrate"],
         },
         {
             "name": "Integration",
@@ -286,6 +286,7 @@ from memory_bank.commands import (  # noqa: E402, F401
     ingest,
     manage,
     mcp,
+    migrate,
     search,
     setup,
     update,
