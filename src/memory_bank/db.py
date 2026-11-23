@@ -36,6 +36,10 @@ DEFAULT_DB_PATH = Path.home() / ".memory-bank" / "qdrant"
 
 QDRANT_DOCKER_URL = "http://localhost:6333"
 QDRANT_CONTAINER_NAME = "memory-bank-qdrant"
+# Pinned so new containers match the qdrant-client range in pyproject.toml.
+# Bump both together; existing containers keep their image (see README
+# "Upgrading the Qdrant server").
+QDRANT_IMAGE = "qdrant/qdrant:v1.20.2"
 LARGE_COLLECTION_THRESHOLD = 20_000
 
 
@@ -123,7 +127,7 @@ def _ensure_qdrant_container(storage_path: Path) -> bool:
                 "-p", "6333:6333",
                 "--restart", "unless-stopped",
                 "-v", f"{storage_path}:/qdrant/storage:z",
-                "qdrant/qdrant",
+                QDRANT_IMAGE,
             ],
             check=True,
             capture_output=True,

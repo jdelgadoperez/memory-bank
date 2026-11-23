@@ -175,6 +175,50 @@ Stopping the container isn't enough. If Docker is running, step 3 above starts i
 - **Hooks**: these run inside Claude Code, so they see your shell environment if you started Claude Code from a terminal. To be sure, also add it to the `env` block in `~/.claude/settings.json`.
 - **MCP server in Claude Desktop**: apps opened from the Dock don't read your shell profile. Add `"env": {"QDRANT_URL": "..."}` to the `memory-bank` entry in `claude_desktop_config.json`.
 
+### Upgrading the Qdrant server
+
+New containers are created from a pinned image (`QDRANT_IMAGE` in `src/memory_bank/db.py`), matched to the `qdrant-client` version in `pyproject.toml`. **An existing container keeps the image it was created with.** Containers created before this pin used the untagged `qdrant/qdrant` image, so they're stuck on whatever version was current at the time. Once the client moves on, every command prints:
+
+```
+UserWarning: Qdrant client version 1.20.0 is incompatible with server version 1.17.1.
+Major versions should match and minor version difference must not exceed 1.
+```
+
+To fix it, upgrade the container. Qdrant only guarantees storage compatibility between consecutive minor versions, so step through each one rather than jumping straight to the latest. Your data lives in the mounted folder, so it carries over from one container to the next.
+
+1. Stop the UI server (`memory-bank ui stop`) and quit Claude Code / Claude Desktop, so no hook or MCP server recreates the container mid-upgrade.
+
+2. Check your current server version:
+
+   ```bash
+   curl -s localhost:6333 | grep -o '"version":"[^"]*"'
+   ```
+
+3. Back up the storage folder (with the container stopped):
+
+   ```bash
+   docker stop memory-bank-qdrant
+   cp -a ~/.memory-bank/qdrant ~/.memory-bank/qdrant.bak
+   ```
+
+4. Step through each minor version, starting from the one after yours. This example goes from 1.17 to 1.20:
+
+   ```bash
+   for v in v1.18.3 v1.19.2 v1.20.2; do
+     docker rm -f memory-bank-qdrant
+     docker run -d --name memory-bank-qdrant -p 6333:6333 --restart unless-stopped \
+       -v ~/.memory-bank/qdrant:/qdrant/storage:z qdrant/qdrant:$v
+     until curl -sf localhost:6333/readyz >/dev/null; do sleep 1; done
+     echo "$v: $(curl -s localhost:6333/collections/chat_history | grep -o '"points_count":[0-9]*')"
+   done
+   ```
+
+   The points count should stay the same at every step.
+
+5. Run `memory-bank stats`. The warning should be gone. Once you're happy, delete `~/.memory-bank/qdrant.bak`.
+
+If a step fails, stop the container, restore the backup with `rm -rf ~/.memory-bank/qdrant && mv ~/.memory-bank/qdrant.bak ~/.memory-bank/qdrant`, and start the old container again.
+
 ### Moving data between modes
 
 The two modes **don't share a storage format**. Even though the container mounts the same `~/.memory-bank/qdrant` folder, they keep data in separate places inside it:

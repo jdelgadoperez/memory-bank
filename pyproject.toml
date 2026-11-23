@@ -8,7 +8,13 @@ version = "0.5.4"
 description = "Ingest and search Claude chat histories using a local vector DB"
 requires-python = ">=3.11"
 dependencies = [
-    "qdrant-client[fastembed]>=1.9.0",
+    # Keep within one minor version of QDRANT_IMAGE in src/memory_bank/db.py —
+    # the client warns against servers more than one minor version apart.
+    # Intel macs on Python 3.14+ can't install fastembed>=0.9 (needs
+    # onnxruntime>=1.24, which has no Intel-mac wheels), so they keep the
+    # older floor; supported installs use Python 3.13 and get the pinned range.
+    "qdrant-client[fastembed]>=1.19,<1.21; sys_platform != 'darwin' or platform_machine != 'x86_64' or python_version < '3.14'",
+    "qdrant-client[fastembed]>=1.9.0,<1.21; sys_platform == 'darwin' and platform_machine == 'x86_64' and python_version >= '3.14'",
     "onnxruntime>=1.17.0",
     "onnxruntime<1.24.0; sys_platform == 'darwin' and platform_machine == 'x86_64'",
     "click>=8.1",

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- The auto-started Qdrant container now uses a pinned image (`qdrant/qdrant:v1.20.2`) instead of the untagged `qdrant/qdrant`, and `qdrant-client` is constrained to `>=1.19,<1.21` to match. Previously the container stayed on whatever version Docker pulled first, while `uv tool install` (which ignores `uv.lock`) installed the newest client, which caused the "client version … is incompatible with server version …" warning. Existing containers keep their image; the README's new "Upgrading the Qdrant server" section walks through upgrading one.
+
 ### Documentation
 - README: new **Storage modes** section explaining embedded vs. server Qdrant, how the mode is chosen, how to switch in each direction, where `QDRANT_URL` must be set, and a script for copying data between modes. Corrects the earlier claim that switching needs no migration: the two modes use different on-disk formats.
 
