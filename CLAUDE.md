@@ -161,7 +161,7 @@ memory-bank delete [SOURCE] [--since EXPR] [--yes]
 memory-bank distill [--since EXPR] [--before EXPR] [--limit N]
                     [--min-messages N] [--replace-raw] [--hard] [--dry-run]
 memory-bank migrate --to server|embedded [--db DIR] [--url URL]
-                    [--batch-size N] [--dry-run]
+                    [--batch-size N] [--pause SECONDS] [--dry-run]
 memory-bank ui [-p PORT] [-B|--no-browser] [--db PATH]
 memory-bank ui start               # background daemon
 memory-bank ui stop

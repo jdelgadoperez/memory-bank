@@ -13,7 +13,7 @@ import warnings
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Callable, Generator
+from typing import Any, Callable, Generator, Iterable, Iterator
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
@@ -198,6 +198,166 @@ def ensure_collection(client: QdrantClient, *, server: bool) -> None:
                     raise
 
 
+# Qdrant's default optimizers.indexing_threshold (KB). Restored after a bulk
+# upload; see copy_points().
+DEFAULT_INDEXING_THRESHOLD = 10_000
+
+
+class EmbeddedReader:
+    """Stream points out of an embedded store without loading it into memory.
+
+    ``QdrantClient(path=...)`` reads the entire collection into RAM on open
+    (every payload plus every vector as Python objects) and re-sorts all IDs on
+    each ``scroll`` call, which is quadratic over a full copy. This reads the
+    SQLite file qdrant-client writes (``collection/<name>/storage.sqlite``,
+    one pickled ``PointStruct`` per row) a batch at a time instead, holding the
+    same ``.lock`` qdrant-client uses so nothing else writes meanwhile.
+
+    Use as a context manager; raises DatabaseLockedError if another process
+    has the store open.
+    """
+
+    def __init__(self, path: Path):
+        self.path = Path(path)
+        self.sqlite_path = self.path / "collection" / COLLECTION / "storage.sqlite"
+        self._lock_file = None
+        self._conn = None
+
+    def __enter__(self) -> EmbeddedReader:
+        import sqlite3
+
+        import portalocker
+
+        lock_path = self.path / ".lock"
+        if lock_path.exists():
+            self._lock_file = open(lock_path, "r+")
+            try:
+                portalocker.lock(
+                    self._lock_file,
+                    portalocker.LockFlags.EXCLUSIVE | portalocker.LockFlags.NON_BLOCKING,
+                )
+            except portalocker.exceptions.LockException as exc:
+                self._lock_file.close()
+                self._lock_file = None
+                raise DatabaseLockedError(
+                    f"The embedded store at {self.path} is in use by another process."
+                ) from exc
+        if self.sqlite_path.exists():
+            self._conn = sqlite3.connect(f"file:{self.sqlite_path}?mode=ro", uri=True)
+        return self
+
+    def __exit__(self, *exc) -> None:
+        if self._conn is not None:
+            self._conn.close()
+        if self._lock_file is not None:
+            import portalocker
+
+            portalocker.unlock(self._lock_file)
+            self._lock_file.close()
+
+    def count(self) -> int:
+        """Row count: exact unless an older qdrant-client left duplicate rows."""
+        if self._conn is None:
+            return 0
+        return self._conn.execute("SELECT COUNT(*) FROM points").fetchone()[0]
+
+    def batches(self, batch_size: int = 256) -> Iterator[list[PointStruct]]:
+        """Yield points in batches, newest row first, skipping superseded duplicates."""
+        import pickle
+
+        from qdrant_client.local.utils import normalize_point_id
+
+        if self._conn is None:
+            return
+        seen: set = set()
+        cursor = self._conn.execute("SELECT point FROM points ORDER BY rowid DESC")
+        while rows := cursor.fetchmany(batch_size):
+            batch = []
+            for (blob,) in rows:
+                point = pickle.loads(blob)
+                pid = normalize_point_id(point.id)
+                if pid in seen:
+                    continue  # an older row for a point already yielded
+                seen.add(pid)
+                batch.append(PointStruct(id=pid, vector=point.vector, payload=point.payload))
+            if batch:
+                yield batch
+
+
+def iter_client_batches(client: QdrantClient, batch_size: int = 256) -> Iterator[list[PointStruct]]:
+    """Yield the collection's points in batches via scroll (for a server source)."""
+    offset = None
+    while True:
+        points, offset = client.scroll(
+            collection_name=COLLECTION,
+            limit=batch_size,
+            offset=offset,
+            with_payload=True,
+            with_vectors=True,
+        )
+        if points:
+            yield [PointStruct(id=p.id, vector=p.vector, payload=p.payload) for p in points]
+        if offset is None:
+            break
+
+
+def copy_points(
+    batches: Iterable[list[PointStruct]],
+    dst: QdrantClient,
+    *,
+    dst_is_server: bool,
+    on_batch: Callable[[int], None] | None = None,
+    pause: float = 0.0,
+) -> int:
+    """Upsert every batch from *batches* into the chat_history collection of *dst*.
+
+    Vectors and payloads are written as given, so nothing is re-embedded and
+    soft-deleted points stay soft-deleted. Points are keyed by message ID, so
+    this merges into whatever *dst* already holds: a point present in both is
+    overwritten, and re-running is safe.
+
+    On a server destination, HNSW indexing is switched off for the duration
+    (Qdrant's recommended bulk-upload setup) so the server isn't rebuilding
+    its index on every core while the upload runs; it's restored afterwards,
+    even on error or Ctrl+C, and Qdrant then indexes once in the background.
+    Each upsert waits for the server to apply it, which keeps the client from
+    racing ahead. *pause* adds a sleep between batches to throttle further.
+
+    Calls ``on_batch(n)`` after each batch of *n* points is written.
+    Returns the number of points copied.
+    """
+    from qdrant_client.models import OptimizersConfigDiff
+
+    ensure_collection(dst, server=dst_is_server)
+
+    restore_threshold = None
+    if dst_is_server:
+        current = dst.get_collection(COLLECTION).config.optimizer_config.indexing_threshold
+        # 0 means a previous run was killed before it could restore — use the default.
+        restore_threshold = current or DEFAULT_INDEXING_THRESHOLD
+        dst.update_collection(
+            collection_name=COLLECTION,
+            optimizers_config=OptimizersConfigDiff(indexing_threshold=0),
+        )
+
+    copied = 0
+    try:
+        for batch in batches:
+            dst.upsert(collection_name=COLLECTION, points=batch, wait=True)
+            copied += len(batch)
+            if on_batch is not None:
+                on_batch(len(batch))
+            if pause:
+                time.sleep(pause)
+    finally:
+        if restore_threshold is not None:
+            dst.update_collection(
+                collection_name=COLLECTION,
+                optimizers_config=OptimizersConfigDiff(indexing_threshold=restore_threshold),
+            )
+    return copied
+
+
 def copy_collection(
     src: QdrantClient,
     dst: QdrantClient,
@@ -206,43 +366,10 @@ def copy_collection(
     batch_size: int = 256,
     on_batch: Callable[[int], None] | None = None,
 ) -> int:
-    """Copy every point of the chat_history collection from *src* into *dst*.
-
-    Vectors and payloads are copied as stored, so nothing is re-embedded and
-    soft-deleted points stay soft-deleted. Points are keyed by message ID, so
-    this merges into whatever *dst* already holds: a point present in both is
-    overwritten with the *src* version, and re-running it is safe.
-
-    Calls ``on_batch(n)`` after each batch of *n* points is written.
-    Returns the number of points copied.
-    """
-    from qdrant_client.models import PointStruct
-
-    ensure_collection(dst, server=dst_is_server)
-    offset = None
-    copied = 0
-    while True:
-        points, offset = src.scroll(
-            collection_name=COLLECTION,
-            limit=batch_size,
-            offset=offset,
-            with_payload=True,
-            with_vectors=True,
-        )
-        if points:
-            dst.upsert(
-                collection_name=COLLECTION,
-                points=[
-                    PointStruct(id=p.id, vector=p.vector, payload=p.payload)
-                    for p in points
-                ],
-            )
-            copied += len(points)
-            if on_batch is not None:
-                on_batch(len(points))
-        if offset is None:
-            break
-    return copied
+    """Copy *src*'s chat_history collection into *dst* (see copy_points)."""
+    return copy_points(
+        iter_client_batches(src, batch_size), dst, dst_is_server=dst_is_server, on_batch=on_batch
+    )
 
 
 def parse_time_expr(expr: str) -> str:
