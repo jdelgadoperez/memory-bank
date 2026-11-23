@@ -13,7 +13,7 @@ import warnings
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Generator
+from typing import Any, Callable, Generator
 
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
@@ -36,6 +36,10 @@ DEFAULT_DB_PATH = Path.home() / ".memory-bank" / "qdrant"
 
 QDRANT_DOCKER_URL = "http://localhost:6333"
 QDRANT_CONTAINER_NAME = "memory-bank-qdrant"
+# Pinned so new containers match the qdrant-client range in pyproject.toml.
+# Bump both together; existing containers keep their image (see README
+# "Upgrading the Qdrant server").
+QDRANT_IMAGE = "qdrant/qdrant:v1.20.2"
 LARGE_COLLECTION_THRESHOLD = 20_000
 
 
@@ -94,8 +98,10 @@ def _docker_daemon_running() -> bool:
 def _ensure_qdrant_container(storage_path: Path) -> bool:
     """Start the memory-bank-qdrant container, creating it if needed.
 
-    Mounts *storage_path* at /qdrant/storage — the same path used by embedded
-    mode, so no data migration is needed when switching from embedded to Docker.
+    Mounts *storage_path* at /qdrant/storage — the same directory embedded mode
+    uses, but the formats differ (embedded: collection/*/storage.sqlite; server:
+    collections/), so existing embedded data is NOT visible to the server and
+    must be copied across with `memory-bank migrate`.
     Returns True if the server becomes reachable within ~15 s.
     """
     inspect = subprocess.run(
@@ -121,7 +127,7 @@ def _ensure_qdrant_container(storage_path: Path) -> bool:
                 "-p", "6333:6333",
                 "--restart", "unless-stopped",
                 "-v", f"{storage_path}:/qdrant/storage:z",
-                "qdrant/qdrant",
+                QDRANT_IMAGE,
             ],
             check=True,
             capture_output=True,
@@ -165,6 +171,78 @@ def _resolve_qdrant_url(storage_path: Path) -> str | None:
         )
 
     return None  # embedded fallback
+
+
+def ensure_collection(client: QdrantClient, *, server: bool) -> None:
+    """Create the chat_history collection if missing, plus payload indexes on a server."""
+    existing = {c.name for c in client.get_collections().collections}
+    if COLLECTION not in existing:
+        client.create_collection(
+            collection_name=COLLECTION,
+            vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
+        )
+    # Payload indexes speed up filtered queries and only work in server mode.
+    if server:
+        from qdrant_client.models import PayloadSchemaType
+        for field in ("source", "project", "role", "session_id", "category"):
+            try:
+                client.create_payload_index(
+                    collection_name=COLLECTION,
+                    field_name=field,
+                    field_schema=PayloadSchemaType.KEYWORD,
+                )
+            except Exception as exc:
+                # Qdrant raises when the index already exists — safe to ignore.
+                # Re-raise anything that doesn't look like an "already exists" error.
+                if "already exists" not in str(exc).lower():
+                    raise
+
+
+def copy_collection(
+    src: QdrantClient,
+    dst: QdrantClient,
+    *,
+    dst_is_server: bool,
+    batch_size: int = 256,
+    on_batch: Callable[[int], None] | None = None,
+) -> int:
+    """Copy every point of the chat_history collection from *src* into *dst*.
+
+    Vectors and payloads are copied as stored, so nothing is re-embedded and
+    soft-deleted points stay soft-deleted. Points are keyed by message ID, so
+    this merges into whatever *dst* already holds: a point present in both is
+    overwritten with the *src* version, and re-running it is safe.
+
+    Calls ``on_batch(n)`` after each batch of *n* points is written.
+    Returns the number of points copied.
+    """
+    from qdrant_client.models import PointStruct
+
+    ensure_collection(dst, server=dst_is_server)
+    offset = None
+    copied = 0
+    while True:
+        points, offset = src.scroll(
+            collection_name=COLLECTION,
+            limit=batch_size,
+            offset=offset,
+            with_payload=True,
+            with_vectors=True,
+        )
+        if points:
+            dst.upsert(
+                collection_name=COLLECTION,
+                points=[
+                    PointStruct(id=p.id, vector=p.vector, payload=p.payload)
+                    for p in points
+                ],
+            )
+            copied += len(points)
+            if on_batch is not None:
+                on_batch(len(points))
+        if offset is None:
+            break
+    return copied
 
 
 def parse_time_expr(expr: str) -> str:
@@ -301,27 +379,7 @@ class MemoryDB:
                 client.close()
 
     def _ensure_collection(self, client: QdrantClient) -> None:
-        existing = {c.name for c in client.get_collections().collections}
-        if COLLECTION not in existing:
-            client.create_collection(
-                collection_name=COLLECTION,
-                vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
-            )
-        # Payload indexes speed up filtered queries and only work in server mode.
-        if self._url:
-            from qdrant_client.models import PayloadSchemaType
-            for field in ("source", "project", "role", "session_id", "category"):
-                try:
-                    client.create_payload_index(
-                        collection_name=COLLECTION,
-                        field_name=field,
-                        field_schema=PayloadSchemaType.KEYWORD,
-                    )
-                except Exception as exc:
-                    # Qdrant raises when the index already exists — safe to ignore.
-                    # Re-raise anything that doesn't look like an "already exists" error.
-                    if "already exists" not in str(exc).lower():
-                        raise
+        ensure_collection(client, server=bool(self._url))
 
     # ------------------------------------------------------------------
     # Write
