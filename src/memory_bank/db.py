@@ -94,8 +94,10 @@ def _docker_daemon_running() -> bool:
 def _ensure_qdrant_container(storage_path: Path) -> bool:
     """Start the memory-bank-qdrant container, creating it if needed.
 
-    Mounts *storage_path* at /qdrant/storage — the same path used by embedded
-    mode, so no data migration is needed when switching from embedded to Docker.
+    Mounts *storage_path* at /qdrant/storage — the same directory embedded mode
+    uses, but the formats differ (embedded: collection/*/storage.sqlite; server:
+    collections/), so existing embedded data is NOT visible to the server and
+    must be copied across (see README "Moving data between modes").
     Returns True if the server becomes reachable within ~15 s.
     """
     inspect = subprocess.run(

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+- README: new **Storage modes** section explaining embedded vs. server Qdrant, how the mode is chosen, how to switch in each direction, where `QDRANT_URL` must be set, and a script for copying data between modes. Corrects the earlier claim that switching needs no migration: the two modes use different on-disk formats.
+
 ## [0.5.4] — 2026-05-26
 
 ### Fixed

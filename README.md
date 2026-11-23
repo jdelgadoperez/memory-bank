@@ -8,6 +8,7 @@ Local vector DB for ingesting and searching Claude chat histories. Ask "what did
 
 - [Getting started](#getting-started)
 - [Configuration](#configuration)
+- [Storage modes](#storage-modes)
 - [Commands](#commands)
   - [Ingest](#ingest)
   - [Search](#search)
@@ -123,6 +124,128 @@ memory-bank ingest claude-code --path /Volumes/external/claude-projects
 # or permanently:
 export CLAUDE_PROJECTS_DIR=/Volumes/external/claude-projects
 ```
+
+---
+
+## Storage modes
+
+memory-bank stores its data in Qdrant, which runs in one of two modes:
+
+| Mode | What it is | When it's used |
+| --- | --- | --- |
+| **Server** | A Qdrant server, usually the `memory-bank-qdrant` Docker container on `localhost:6333` | Whenever one is reachable |
+| **Embedded** | Qdrant runs inside the memory-bank process and reads files directly. No server needed. | Fallback when no server is reachable |
+
+There's no setting that picks the mode. Each time a memory-bank process starts, it uses the first of these that works:
+
+1. `QDRANT_URL` is set → use that server. Docker auto-start is skipped.
+2. Something already answers on `localhost:6333` → use it.
+3. Docker is running → start (or create) the `memory-bank-qdrant` container and use it.
+4. Otherwise → embedded mode.
+
+`memory-bank stats` shows the current mode on its **Qdrant mode** row.
+
+Embedded mode is fine for small collections. It slows down past about 20k points (you'll see a warning), and only one process can have the files open at a time. So the UI server, MCP server and CLI commands can block each other with `Database is locked`. Server mode doesn't have either limit.
+
+### Switching from embedded to server
+
+1. Stop anything that has the embedded files open: `memory-bank ui stop`.
+2. Start Docker.
+3. Run any command, e.g. `memory-bank stats`. It creates the container, and the **Qdrant mode** row should now say `server`.
+4. Restart the long-running processes, which pick their mode once at startup: `memory-bank ui start`, and restart Claude Code / Claude Desktop so the MCP server reconnects.
+5. **Copy your existing data over** (see [Moving data between modes](#moving-data-between-modes)). The server starts out **empty**.
+
+You don't need `QDRANT_URL` for this. The container on `localhost:6333` is found automatically. Set it only if Qdrant runs somewhere else (another host or port, or Qdrant Cloud), and make sure that server is already up, because setting `QDRANT_URL` skips the Docker auto-start.
+
+### Switching from server to embedded
+
+Stopping the container isn't enough. If Docker is running, step 3 above starts it again, and the container is set to restart on its own.
+
+1. Unset `QDRANT_URL`.
+2. Stop the container: `docker stop memory-bank-qdrant`.
+3. Quit Docker.
+4. Restart the UI server and Claude Code / Claude Desktop.
+5. Copy your data over if the server has anything the embedded store doesn't.
+
+### Where `QDRANT_URL` needs to be set
+
+`QDRANT_URL` is a plain environment variable that each process reads at startup. memory-bank doesn't save it anywhere. Set it wherever the process runs:
+
+- **CLI**: `~/.zshrc` / `~/.bashrc`.
+- **Hooks**: these run inside Claude Code, so they see your shell environment if you started Claude Code from a terminal. To be sure, also add it to the `env` block in `~/.claude/settings.json`.
+- **MCP server in Claude Desktop**: apps opened from the Dock don't read your shell profile. Add `"env": {"QDRANT_URL": "..."}` to the `memory-bank` entry in `claude_desktop_config.json`.
+
+### Moving data between modes
+
+The two modes **don't share a storage format**. Even though the container mounts the same `~/.memory-bank/qdrant` folder, they keep data in separate places inside it:
+
+```
+~/.memory-bank/qdrant/
+├── collection/    ← embedded mode (SQLite)
+├── meta.json      ← embedded mode
+└── collections/   ← server mode (Qdrant's own segment format)
+```
+
+Switching modes therefore doesn't bring your history along. Neither side is deleted, though. The other mode's data is still on disk and can be copied across.
+
+There's no built-in migrate command yet. This script copies every point, with its stored vector and payload, so nothing is re-embedded and soft-deleted points stay soft-deleted. Points are keyed by message ID, so it **merges** into whatever the destination already has, and it's safe to run more than once.
+
+Save it as `migrate.py`:
+
+```python
+from pathlib import Path
+from qdrant_client import QdrantClient, models
+
+COLLECTION = "chat_history"
+EMBEDDED = str(Path.home() / ".memory-bank" / "qdrant")   # or your MEMORY_BANK_DB
+SERVER = "http://localhost:6333"                         # or your QDRANT_URL
+
+# Embedded → server. To go the other way, swap these two lines.
+src = QdrantClient(path=EMBEDDED)
+dst = QdrantClient(url=SERVER)
+
+if not dst.collection_exists(COLLECTION):
+    dst.create_collection(
+        COLLECTION,
+        vectors_config=models.VectorParams(size=384, distance=models.Distance.COSINE),
+    )
+
+offset, copied = None, 0
+while True:
+    points, offset = src.scroll(
+        COLLECTION, limit=256, offset=offset, with_payload=True, with_vectors=True
+    )
+    if points:
+        dst.upsert(COLLECTION, points=[
+            models.PointStruct(id=p.id, vector=p.vector, payload=p.payload) for p in points
+        ])
+        copied += len(points)
+    if offset is None:
+        break
+
+print(f"Copied {copied} points; destination now has {dst.count(COLLECTION).count}")
+src.close()
+dst.close()
+```
+
+Before running it:
+
+- The server must be running. For embedded → server, finish steps 1–3 of [Switching from embedded to server](#switching-from-embedded-to-server) first.
+- Nothing else may have the embedded files open. Stop the UI server, and quit Claude Code / Claude Desktop so the hooks and MCP server aren't using them.
+
+Run it with memory-bank's own Python, so the `qdrant-client` version matches the one that wrote the embedded files:
+
+```bash
+# Installed with uv tool / install.sh
+~/.local/share/uv/tools/memory-bank/bin/python migrate.py
+
+# Cloned repo
+.venv/bin/python migrate.py
+```
+
+Afterwards, run `memory-bank stats` and check that the point count matches.
+
+**Alternative: re-ingest.** Running `memory-bank ingest all` in the new mode rebuilds whatever is still in your source files. Anything that isn't comes back only through the copy: Claude Code transcripts that have since been cleaned up, one-off ChatGPT/Desktop imports, and `distill` summaries (especially with `--replace-raw`). So prefer the script.
 
 ---
 
@@ -421,7 +544,7 @@ After running `setup install`, the CLI prints next steps: ingest your history, o
 
 ## How it works
 
-- **Storage**: [Qdrant](https://qdrant.tech/) runs embedded — no server process, data lives in `~/.memory-bank/qdrant/`
+- **Storage**: [Qdrant](https://qdrant.tech/), as a Docker-managed server when available, otherwise embedded with no server process. Data lives in `~/.memory-bank/qdrant/`. See [Storage modes](#storage-modes).
 - **Embeddings**: [fastembed](https://github.com/qdrant/fastembed) with `BAAI/bge-small-en-v1.5` (384-dim, ~25 MB, downloaded once, runs fully offline after that)
 - **Offline fallback**: if the model can't be loaded, a hash-based fallback embedding is used so ingest still works, with reduced search quality
 - **Deduplication**: each message gets a SHA-256 ID; re-ingesting the same source never creates duplicates
