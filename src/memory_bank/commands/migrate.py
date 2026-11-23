@@ -7,6 +7,11 @@ import rich_click as click
 
 from memory_bank.cli import CONTEXT_SETTINGS, cli, console
 
+_LOCK_HINT = (
+    "Stop the UI server ('memory-bank ui stop') and quit Claude Code / "
+    "Claude Desktop so the hooks and MCP server release it, then retry."
+)
+
 
 def _open_embedded(path: Path):
     """Open the embedded store, turning lock and size warnings into clean output."""
@@ -21,9 +26,7 @@ def _open_embedded(path: Path):
         except RuntimeError as exc:
             if "already accessed by another instance" in str(exc):
                 raise click.ClickException(
-                    f"The embedded store at {path} is in use by another process.\n"
-                    "Stop the UI server ('memory-bank ui stop') and quit Claude Code / "
-                    "Claude Desktop so the hooks and MCP server release it, then retry."
+                    f"The embedded store at {path} is in use by another process.\n{_LOCK_HINT}"
                 ) from exc
             raise
 
@@ -92,11 +95,18 @@ def _count(client) -> int:
     help="Points copied per request.",
 )
 @click.option(
+    "--pause",
+    type=click.FloatRange(0, 60),
+    default=0.0,
+    metavar="SECONDS",
+    help="Sleep between batches to throttle the copy, e.g. 0.1. Default: no pause.",
+)
+@click.option(
     "--dry-run",
     is_flag=True,
     help="Show what would be copied without writing anything.",
 )
-def migrate(target, db, url, batch_size, dry_run):
+def migrate(target, db, url, batch_size, pause, dry_run):
     """Copy your memory bank between embedded and server (Docker) Qdrant.
 
     The two modes share ~/.memory-bank/qdrant but store data in different
@@ -108,12 +118,21 @@ def migrate(target, db, url, batch_size, dry_run):
     so a message already there is overwritten with the source copy and
     re-running is safe. Nothing is deleted from the source.
 
+    [bold]Resource use:[/bold] --to server streams the embedded store a batch at
+    a time and pauses the server's indexing until the upload finishes, so memory
+    stays flat. Afterwards Qdrant indexes once in the background, which can keep
+    CPU busy for a while. --to embedded holds the whole destination in memory,
+    as embedded mode always does, so it suits smaller collections. Use --pause
+    to slow either direction down.
+
     \b
     Examples:
       memory-bank migrate --to server --dry-run
       memory-bank migrate --to server
       memory-bank migrate --to embedded
     """
+    from contextlib import ExitStack
+
     from rich.progress import (
         BarColumn,
         MofNCompleteColumn,
@@ -122,25 +141,40 @@ def migrate(target, db, url, batch_size, dry_run):
         TimeRemainingColumn,
     )
 
-    from memory_bank.db import QDRANT_DOCKER_URL, copy_collection, get_db_path
+    from memory_bank.db import (
+        QDRANT_DOCKER_URL,
+        DatabaseLockedError,
+        EmbeddedReader,
+        copy_points,
+        get_db_path,
+        iter_client_batches,
+    )
 
     db_path = Path(db).expanduser() if db else get_db_path()
     server_url = url or QDRANT_DOCKER_URL
 
-    # Open the source first so a missing/locked source fails before touching the target.
-    if target == "server":
-        src = _open_embedded(db_path)
-        dst = _open_server(server_url, db_path, autostart=True)
-        src_label, dst_label = f"embedded ({db_path})", f"server ({server_url})"
-    else:
-        src = _open_server(server_url, db_path, autostart=False)
-        dst = _open_embedded(db_path)
-        src_label, dst_label = f"server ({server_url})", f"embedded ({db_path})"
+    with ExitStack() as stack:
+        # Open the source first so a missing/locked source fails before touching the target.
+        if target == "server":
+            try:
+                reader = stack.enter_context(EmbeddedReader(db_path))
+            except DatabaseLockedError as exc:
+                raise click.ClickException(f"{exc}\n{_LOCK_HINT}") from exc
+            dst = _open_server(server_url, db_path, autostart=True)
+            stack.callback(dst.close)
+            src_count = reader.count()
+            batches = reader.batches(batch_size)
+            src_label, dst_label = f"embedded ({db_path})", f"server ({server_url})"
+        else:
+            src = _open_server(server_url, db_path, autostart=False)
+            stack.callback(src.close)
+            dst = _open_embedded(db_path)
+            stack.callback(dst.close)
+            src_count = _count(src)
+            batches = iter_client_batches(src, batch_size)
+            src_label, dst_label = f"server ({server_url})", f"embedded ({db_path})"
 
-    try:
-        src_count = _count(src)
         dst_before = _count(dst)
-
         console.print(f"[bold]From[/bold]  {src_label}: [cyan]{src_count}[/cyan] points")
         console.print(f"[bold]To[/bold]    {dst_label}: [cyan]{dst_before}[/cyan] points")
 
@@ -163,29 +197,30 @@ def migrate(target, db, url, batch_size, dry_run):
             transient=True,
         ) as progress:
             task = progress.add_task("copy", total=src_count)
-            copied = copy_collection(
-                src,
+            copied = copy_points(
+                batches,
                 dst,
                 dst_is_server=(target == "server"),
-                batch_size=batch_size,
                 on_batch=lambda n: progress.advance(task, n),
+                pause=pause,
             )
 
         dst_after = _count(dst)
-    finally:
-        src.close()
-        dst.close()
 
     console.print(
         f"[green]✓[/green] Copied {copied} points. Destination now has "
         f"[bold cyan]{dst_after}[/bold cyan] (was {dst_before})."
     )
-    if dst_after < src_count:
+    if dst_after < copied:
         raise click.ClickException(
-            f"Destination has fewer points ({dst_after}) than the source ({src_count})."
+            f"Destination has fewer points ({dst_after}) than were copied ({copied})."
         )
 
     if target == "server":
+        console.print(
+            "[dim]Qdrant is now building its search index in the background; CPU "
+            "may stay busy for a while. Search works meanwhile.[/dim]"
+        )
         console.print(
             "[dim]Restart the UI server and Claude Code / Claude Desktop so they "
             "reconnect in server mode.[/dim]"

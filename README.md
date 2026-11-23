@@ -251,6 +251,7 @@ memory-bank migrate --to embedded           # server → embedded
 | `--db DIR` | Embedded store path (default `MEMORY_BANK_DB` or `~/.memory-bank/qdrant`) |
 | `--url URL` | Server URL (default `QDRANT_URL` or `http://localhost:6333`) |
 | `--batch-size N` | Points per request (default 256) |
+| `--pause SECONDS` | Sleep between batches to throttle the copy, e.g. `0.1` |
 | `--dry-run` | Show what would be copied without writing |
 
 Notes:
@@ -258,7 +259,11 @@ Notes:
 - **Nothing else may have the embedded files open.** If the UI server, a hook or the MCP server holds them, `migrate` stops with a message saying which to close.
 - **With `--to server`**, if nothing answers on `localhost:6333` and Docker is running, the container is started for you. A custom `--url` must already be up.
 - **With `--to embedded`**, the server must already be running. Docker is never started.
-- It finishes by printing both counts, and exits with an error if the destination ends up with fewer points than the source.
+- It finishes by printing both counts, and exits with an error if the destination ends up with fewer points than were copied.
+
+**Resource use.** With `--to server`, the embedded store is read straight from its SQLite file one batch at a time, so memory stays flat however big the store is. Opening it the usual way loads every message and vector into RAM, which runs to many GB for a large collection. The server's search indexing is paused during the upload and turned back on at the end, even if you Ctrl+C. Qdrant then builds the index once in the background, so the container's CPU can stay busy for a while afterwards; search keeps working meanwhile. To slow things down further, add `--pause 0.1` or cap the container in Docker Desktop (*Settings → Resources*).
+
+With `--to embedded`, the destination is held in memory the whole time, as embedded mode always is. It's meant for collections small enough to run embedded in the first place.
 
 **Alternative: re-ingest.** Running `memory-bank ingest all` in the new mode rebuilds whatever is still in your source files. Anything that isn't comes back only through `migrate`: Claude Code transcripts that have since been cleaned up, one-off ChatGPT/Desktop imports, and `distill` summaries (especially with `--replace-raw`).
 

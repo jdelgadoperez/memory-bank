@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `memory-bank migrate --to server` no longer overloads the machine on large stores. It now streams the embedded SQLite file a batch at a time instead of opening it with `QdrantClient(path=...)`, which loaded every point into RAM and re-sorted every ID on each batch. The server's HNSW indexing is paused during the upload and restored afterwards, even on Ctrl+C. Measured on 30k points: about 800 MB → 20 MB of extra memory and 8.7 s → 0.7 s to read the source. New `--pause SECONDS` option throttles between batches.
+
 ### Added
 - `memory-bank migrate --to server|embedded` copies the collection between embedded and server Qdrant, keeping stored vectors and payloads (no re-embedding). It merges by message ID, so it's safe to re-run, and it supports `--dry-run`, `--db`, `--url` and `--batch-size`. With `--to server` it starts the Docker container if needed.
 
